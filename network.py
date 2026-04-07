@@ -146,13 +146,22 @@ def ping_sweep(subnet: str) -> None:
         t.join(timeout=1.5)
 
 
+def _is_alive(ip: str) -> bool:
+    """Returns True only if the device responds to a ping right now."""
+    result = subprocess.run(
+        ["ping", "-n", "1", "-w", "500", ip],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def scan_network(subnet: str, on_progress=None) -> list[dict]:
     """
     Full network scan:
-      1. Ping sweep — wakes idle phones/laptops, populates ARP cache
-      2. Scapy ARP scan — active discovery
-      3. Windows ARP cache — catches anything Scapy missed
-    Merges all three sources and deduplicates by IP.
+      1. Ping sweep  — wakes idle devices, populates ARP cache
+      2. Scapy ARP   — active ARP discovery
+      3. ARP cache   — catches anything Scapy missed
+      4. Verify alive — removes stale/offline entries from the list
     """
     merged: dict[str, dict] = {}
 
@@ -166,7 +175,6 @@ def scan_network(subnet: str, on_progress=None) -> list[dict]:
     try:
         for d in _scan_scapy(subnet):
             merged[d["ip"]] = d
-        print(f"[scan] Scapy: {len(merged)} device(s)")
     except Exception as e:
         print(f"[scan] Scapy failed: {e}")
 
@@ -174,5 +182,26 @@ def scan_network(subnet: str, on_progress=None) -> list[dict]:
         if d["ip"] not in merged:
             merged[d["ip"]] = d
 
-    print(f"[scan] Total: {len(merged)} device(s)")
-    return sorted(merged.values(), key=lambda d: int(d["ip"].split(".")[-1]))
+    if on_progress:
+        on_progress("Verifying devices are online…")
+
+    # Verify each candidate in parallel — drop any that don't respond
+    alive: dict[str, bool] = {}
+    lock  = threading.Lock()
+
+    def _check(ip: str) -> None:
+        result = _is_alive(ip)
+        with lock:
+            alive[ip] = result
+
+    threads = [threading.Thread(target=_check, args=(ip,), daemon=True)
+               for ip in merged]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=2)
+
+    online = {ip: d for ip, d in merged.items() if alive.get(ip)}
+    print(f"[scan] Online: {len(online)} / {len(merged)} discovered")
+
+    return sorted(online.values(), key=lambda d: int(d["ip"].split(".")[-1]))
