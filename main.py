@@ -300,8 +300,11 @@ class App(ctk.CTk):
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
-        own    = get_local_ip()
-        devs   = scan_network(get_subnet())
+        own  = get_local_ip()
+        devs = scan_network(
+            get_subnet(),
+            on_progress=lambda msg: self.after(0, lambda m=msg: self._status(m)),
+        )
 
         if not self._gateway_mac and self._gateway_ip:
             for d in devs:

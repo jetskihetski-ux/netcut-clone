@@ -1,6 +1,7 @@
 import ipaddress
 import socket
 import subprocess
+import threading
 import re
 
 from scapy.all import ARP, Ether, srp, conf
@@ -121,14 +122,48 @@ def _scan_arp_cache() -> list[dict]:
     return devices
 
 
-def scan_network(subnet: str) -> list[dict]:
+def ping_sweep(subnet: str) -> None:
     """
-    Scan the subnet — always merges Scapy ARP scan + Windows ARP cache
-    so no device is missed even if one method finds only a subset.
+    Ping all 254 hosts in the subnet simultaneously.
+    This wakes up idle devices (phones, laptops) and populates
+    the Windows ARP cache so they appear in the scan.
+    """
+    prefix = subnet.rsplit(".", 1)[0]   # e.g. "192.168.0"
+    threads = []
+
+    def _ping(ip: str) -> None:
+        subprocess.run(
+            ["ping", "-n", "1", "-w", "300", ip],
+            capture_output=True,
+        )
+
+    for i in range(1, 255):
+        t = threading.Thread(target=_ping, args=(f"{prefix}.{i}",), daemon=True)
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join(timeout=1.5)
+
+
+def scan_network(subnet: str,
+                 on_progress: callable | None = None) -> list[dict]:
+    """
+    Full network scan:
+      1. Ping sweep — wakes idle phones/laptops, populates ARP cache
+      2. Scapy ARP scan — active discovery
+      3. Windows ARP cache — catches anything Scapy missed
+    Merges all three sources and deduplicates by IP.
     """
     merged: dict[str, dict] = {}
 
-    # Source 1: Scapy active ARP scan
+    if on_progress:
+        on_progress("Pinging all devices…")
+    ping_sweep(subnet)
+
+    if on_progress:
+        on_progress("Running ARP scan…")
+
     try:
         for d in _scan_scapy(subnet):
             merged[d["ip"]] = d
@@ -136,10 +171,9 @@ def scan_network(subnet: str) -> list[dict]:
     except Exception as e:
         print(f"[scan] Scapy failed: {e}")
 
-    # Source 2: Windows ARP cache (always run, fills gaps)
     for d in _scan_arp_cache():
         if d["ip"] not in merged:
             merged[d["ip"]] = d
-    print(f"[scan] Total after merge: {len(merged)} device(s)")
 
+    print(f"[scan] Total: {len(merged)} device(s)")
     return sorted(merged.values(), key=lambda d: int(d["ip"].split(".")[-1]))
