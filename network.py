@@ -123,28 +123,23 @@ def _scan_arp_cache() -> list[dict]:
 
 def scan_network(subnet: str) -> list[dict]:
     """
-    Scan the subnet for devices.
-    Tries Scapy ARP scan first (more complete), falls back to ARP cache.
+    Scan the subnet — always merges Scapy ARP scan + Windows ARP cache
+    so no device is missed even if one method finds only a subset.
     """
-    devices = []
+    merged: dict[str, dict] = {}
 
+    # Source 1: Scapy active ARP scan
     try:
-        devices = _scan_scapy(subnet)
-        print(f"[scan] Scapy found {len(devices)} device(s)")
+        for d in _scan_scapy(subnet):
+            merged[d["ip"]] = d
+        print(f"[scan] Scapy: {len(merged)} device(s)")
     except Exception as e:
-        print(f"[scan] Scapy failed ({e}), falling back to ARP cache")
+        print(f"[scan] Scapy failed: {e}")
 
-    if not devices:
-        devices = _scan_arp_cache()
-        print(f"[scan] ARP cache found {len(devices)} device(s)")
+    # Source 2: Windows ARP cache (always run, fills gaps)
+    for d in _scan_arp_cache():
+        if d["ip"] not in merged:
+            merged[d["ip"]] = d
+    print(f"[scan] Total after merge: {len(merged)} device(s)")
 
-    # Deduplicate by IP
-    seen = set()
-    unique = []
-    for d in devices:
-        if d["ip"] not in seen:
-            seen.add(d["ip"])
-            unique.append(d)
-
-    unique.sort(key=lambda d: int(d["ip"].split(".")[-1]))
-    return unique
+    return sorted(merged.values(), key=lambda d: int(d["ip"].split(".")[-1]))
