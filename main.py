@@ -1,279 +1,285 @@
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox
+import customtkinter as ctk
+from tkinter import messagebox
 
 from network import get_subnet, get_gateway_ip, get_mac, scan_network, get_local_ip
 from spoofer import ARPSpoofer
+from vendor import get_device_info
 
-# ── theme ─────────────────────────────────────────────────────────────────────
-BG      = "#1E1E2E"
-CARD    = "#2D2D3F"
-ACCENT  = "#6C63FF"
-RED     = "#FF5252"
-GREEN   = "#4CAF50"
-TEXT    = "#FFFFFF"
-SUBTEXT = "#888888"
-BORDER  = "#3D3D55"
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+ACCENT = "#6C63FF"
+RED    = "#FF5252"
+GREEN  = "#4CAF50"
+BG     = "#1A1A2E"
+CARD   = "#2D2D3F"
+CARD2  = "#252537"
+TEXT   = "#FFFFFF"
+SUB    = "#888888"
+BORDER = "#3D3D55"
 
 
-class App(tk.Tk):
+class DeviceCard(ctk.CTkFrame):
+    def __init__(self, parent, device: dict, blocked: bool, on_toggle, **kw):
+        super().__init__(parent, corner_radius=14, fg_color=CARD, **kw)
+
+        emoji, label = get_device_info(device["mac"], device["hostname"])
+
+        # ── icon ──
+        ctk.CTkLabel(self, text=emoji, font=ctk.CTkFont(size=30),
+                     width=52).grid(row=0, column=0, rowspan=2,
+                                    padx=(16, 8), pady=16, sticky="ns")
+
+        # ── name + meta ──
+        ctk.CTkLabel(self, text=label,
+                     font=ctk.CTkFont("Segoe UI", 14, "bold"),
+                     text_color=TEXT, anchor="w").grid(
+            row=0, column=1, sticky="w", padx=(0, 8), pady=(14, 0))
+
+        ctk.CTkLabel(self, text=f"{device['ip']}   ·   {device['mac']}",
+                     font=ctk.CTkFont("Segoe UI", 11),
+                     text_color=SUB, anchor="w").grid(
+            row=1, column=1, sticky="w", padx=(0, 8), pady=(0, 14))
+
+        # ── status badge ──
+        status_txt   = "🔴  Blocked" if blocked else "🟢  Active"
+        status_color = "#FF5252" if blocked else "#4CAF50"
+        ctk.CTkLabel(self, text=status_txt,
+                     font=ctk.CTkFont("Segoe UI", 11, "bold"),
+                     text_color=status_color, width=90).grid(
+            row=0, column=2, padx=(0, 8), pady=(14, 0), sticky="e")
+
+        # ── toggle button ──
+        btn_text  = "Unblock" if blocked else "✂  Block"
+        btn_color = "#2E7D32" if blocked else RED
+        btn_hover = "#1B5E20" if blocked else "#C62828"
+        ctk.CTkButton(self, text=btn_text,
+                      fg_color=btn_color, hover_color=btn_hover,
+                      font=ctk.CTkFont("Segoe UI", 11, "bold"),
+                      width=88, height=30, corner_radius=8,
+                      command=on_toggle).grid(
+            row=1, column=2, padx=(0, 16), pady=(0, 14), sticky="e")
+
+        self.columnconfigure(1, weight=1)
+
+
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("NetCut Clone")
-        self.geometry("820x560")
-        self.configure(bg=BG)
+        self.title("NetCut")
+        self.geometry("580x660")
+        self.configure(fg_color=BG)
         self.resizable(True, True)
 
-        self._spoofer   = ARPSpoofer()
-        self._devices:  list[dict] = []
+        self._spoofer      = ARPSpoofer()
+        self._devices:     list[dict] = []
         self._gateway_ip:  str | None = None
         self._gateway_mac: str | None = None
+        self._card_widgets: list[DeviceCard] = []
 
-        self._build_ui()
+        self._build()
         self._init_network()
 
-    # ── UI construction ───────────────────────────────────────────────────────
+    # ── UI ────────────────────────────────────────────────────────────────────
 
-    def _build_ui(self):
-        # ── top bar ──
-        top = tk.Frame(self, bg=BG)
-        top.pack(fill="x", padx=20, pady=(20, 10))
+    def _build(self):
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(24, 12))
 
-        tk.Label(top, text="NetCut Clone", font=("Segoe UI", 18, "bold"),
-                 bg=BG, fg=TEXT).pack(side="left")
+        ctk.CTkLabel(hdr, text="NetCut",
+                     font=ctk.CTkFont("Segoe UI", 26, "bold"),
+                     text_color=TEXT).pack(side="left")
 
-        self._scan_btn = tk.Button(
-            top, text="⟳  Scan Network",
-            font=("Segoe UI", 10, "bold"),
-            bg=ACCENT, fg=TEXT, activebackground="#5550CC",
-            activeforeground=TEXT, bd=0, cursor="hand2",
-            padx=18, pady=8, relief="flat",
+        self._scan_btn = ctk.CTkButton(
+            hdr, text="⟳   Scan",
+            font=ctk.CTkFont("Segoe UI", 12, "bold"),
+            fg_color=ACCENT, hover_color="#5550CC",
+            width=110, height=38, corner_radius=10,
             command=self._start_scan,
         )
         self._scan_btn.pack(side="right")
 
-        # ── gateway info ──
-        info = tk.Frame(self, bg=CARD, highlightbackground=BORDER,
-                        highlightthickness=1)
-        info.pack(fill="x", padx=20, pady=(0, 10))
+        # Info bar
+        info = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
+        info.pack(fill="x", padx=24, pady=(0, 16))
 
-        self._gw_label  = self._info_label(info, "Gateway", "Detecting...")
-        self._own_label = self._info_label(info, "Your IP",  get_local_ip())
+        gw_col = ctk.CTkFrame(info, fg_color="transparent")
+        gw_col.pack(side="left", padx=20, pady=12)
+        ctk.CTkLabel(gw_col, text="GATEWAY",
+                     font=ctk.CTkFont("Segoe UI", 9, "bold"),
+                     text_color=SUB).pack(anchor="w")
+        self._gw_label = ctk.CTkLabel(gw_col, text="Detecting…",
+                                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                                       text_color=TEXT)
+        self._gw_label.pack(anchor="w")
 
-        # ── device table ──
-        table_frame = tk.Frame(self, bg=BG)
-        table_frame.pack(fill="both", expand=True, padx=20)
+        ip_col = ctk.CTkFrame(info, fg_color="transparent")
+        ip_col.pack(side="right", padx=20, pady=12)
+        ctk.CTkLabel(ip_col, text="YOUR IP",
+                     font=ctk.CTkFont("Segoe UI", 9, "bold"),
+                     text_color=SUB).pack(anchor="e")
+        ctk.CTkLabel(ip_col, text=get_local_ip(),
+                     font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                     text_color=TEXT).pack(anchor="e")
 
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Custom.Treeview",
-                        background=CARD, foreground=TEXT,
-                        fieldbackground=CARD, rowheight=36,
-                        font=("Segoe UI", 10))
-        style.configure("Custom.Treeview.Heading",
-                        background=BORDER, foreground=TEXT,
-                        font=("Segoe UI", 10, "bold"), relief="flat")
-        style.map("Custom.Treeview",
-                  background=[("selected", ACCENT)],
-                  foreground=[("selected", TEXT)])
+        # Section label
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=24, pady=(0, 8))
+        ctk.CTkLabel(row, text="Connected Devices",
+                     font=ctk.CTkFont("Segoe UI", 14, "bold"),
+                     text_color=TEXT).pack(side="left")
+        ctk.CTkButton(row, text="Unblock All",
+                      font=ctk.CTkFont("Segoe UI", 10),
+                      fg_color="transparent", hover_color=CARD,
+                      text_color=SUB, width=88, height=28,
+                      command=self._unblock_all).pack(side="right")
 
-        cols = ("ip", "mac", "hostname", "status")
-        self._tree = ttk.Treeview(table_frame, columns=cols,
-                                  show="headings", style="Custom.Treeview")
-        self._tree.heading("ip",       text="IP Address")
-        self._tree.heading("mac",      text="MAC Address")
-        self._tree.heading("hostname", text="Hostname")
-        self._tree.heading("status",   text="Status")
-        self._tree.column("ip",       width=140, anchor="w")
-        self._tree.column("mac",      width=160, anchor="w")
-        self._tree.column("hostname", width=240, anchor="w")
-        self._tree.column("status",   width=110, anchor="center")
+        # Scrollable device list
+        self._list = ctk.CTkScrollableFrame(self, fg_color="transparent",
+                                             scrollbar_button_color=CARD2,
+                                             scrollbar_button_hover_color=BORDER)
+        self._list.pack(fill="both", expand=True, padx=24, pady=(0, 8))
 
-        self._tree.tag_configure("blocked", foreground=RED)
-        self._tree.tag_configure("active",  foreground=GREEN)
-
-        sb = ttk.Scrollbar(table_frame, orient="vertical",
-                           command=self._tree.yview)
-        self._tree.configure(yscrollcommand=sb.set)
-        self._tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-        self._tree.bind("<Double-1>", lambda _: self._toggle_selected())
-
-        # ── action buttons ──
-        actions = tk.Frame(self, bg=BG)
-        actions.pack(fill="x", padx=20, pady=12)
-
-        self._block_btn = tk.Button(
-            actions, text="✂  Block",
-            font=("Segoe UI", 11, "bold"),
-            bg=RED, fg=TEXT, activebackground="#CC0000",
-            activeforeground=TEXT, bd=0, cursor="hand2",
-            padx=28, pady=10, relief="flat",
-            command=self._block_selected,
+        self._empty_lbl = ctk.CTkLabel(
+            self._list,
+            text="No devices found\nClick  ⟳ Scan  to discover devices on your network",
+            font=ctk.CTkFont("Segoe UI", 13),
+            text_color=SUB,
         )
-        self._block_btn.pack(side="left", padx=(0, 10))
+        self._empty_lbl.pack(pady=60)
 
-        self._unblock_btn = tk.Button(
-            actions, text="✔  Unblock",
-            font=("Segoe UI", 11, "bold"),
-            bg=GREEN, fg="#111", activebackground="#388E3C",
-            activeforeground="#111", bd=0, cursor="hand2",
-            padx=28, pady=10, relief="flat",
-            command=self._unblock_selected,
-        )
-        self._unblock_btn.pack(side="left")
-
-        tk.Button(
-            actions, text="Unblock All",
-            font=("Segoe UI", 10),
-            bg=CARD, fg=SUBTEXT, activebackground=BORDER,
-            activeforeground=TEXT, bd=0, cursor="hand2",
-            padx=18, pady=10, relief="flat",
-            command=self._unblock_all,
-        ).pack(side="right")
-
-        # ── status bar ──
-        self._status = tk.Label(self, text="Ready — click Scan to discover devices",
-                                font=("Segoe UI", 9), bg=BORDER, fg=SUBTEXT,
-                                anchor="w", padx=12, pady=5)
-        self._status.pack(fill="x", side="bottom")
-
-    def _info_label(self, parent, title, value):
-        f = tk.Frame(parent, bg=CARD)
-        f.pack(side="left", padx=20, pady=10)
-        tk.Label(f, text=title, font=("Segoe UI", 9),
-                 bg=CARD, fg=SUBTEXT).pack(anchor="w")
-        lbl = tk.Label(f, text=value, font=("Segoe UI", 11, "bold"),
-                       bg=CARD, fg=TEXT)
-        lbl.pack(anchor="w")
-        return lbl
+        # Status bar
+        bar = ctk.CTkFrame(self, fg_color=CARD2, corner_radius=0, height=34)
+        bar.pack(fill="x", side="bottom")
+        self._status_lbl = ctk.CTkLabel(bar, text="Ready",
+                                         font=ctk.CTkFont("Segoe UI", 10),
+                                         text_color=SUB)
+        self._status_lbl.pack(side="left", padx=16, pady=7)
 
     # ── network init ──────────────────────────────────────────────────────────
 
     def _init_network(self):
         def _worker():
-            gw_ip = get_gateway_ip()
-            # Show IP immediately even before MAC is resolved
-            self.after(0, lambda: self._on_gateway_ip(gw_ip))
-            gw_mac = get_mac(gw_ip) if gw_ip else None
-            self.after(0, lambda: self._on_gateway_mac(gw_mac))
+            ip  = get_gateway_ip()
+            self.after(0, lambda: self._on_gw_ip(ip))
+            mac = get_mac(ip) if ip else None
+            self.after(0, lambda: self._on_gw_mac(mac))
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_gateway_ip(self, ip):
+    def _on_gw_ip(self, ip: str | None):
         self._gateway_ip = ip
-        if ip:
-            self._gw_label.config(text=f"{ip}  (resolving MAC...)")
-            self._set_status(f"Gateway IP: {ip} — looking up MAC address...")
-        else:
-            self._gw_label.config(text="Not found")
-            self._set_status("Gateway not found — are you connected to WiFi?")
+        self._gw_label.configure(text=ip or "Not found")
+        self._status("Gateway found — resolving MAC…" if ip else
+                     "Gateway not found. Are you on WiFi?")
 
-    def _on_gateway_mac(self, mac):
+    def _on_gw_mac(self, mac: str | None):
         self._gateway_mac = mac
         ip = self._gateway_ip or "?"
         if mac:
-            self._gw_label.config(text=f"{ip}  ({mac})")
-            self._set_status(f"Gateway: {ip} — ready to scan")
+            self._gw_label.configure(text=f"{ip}  ({mac})")
+            self._status("Ready — click Scan to discover devices")
         else:
-            self._gw_label.config(text=f"{ip}  (MAC unknown)")
-            self._set_status(f"Gateway IP found ({ip}) but MAC lookup failed — try running as Administrator")
+            self._gw_label.configure(text=f"{ip}  (MAC pending…)")
+            self._status("Gateway MAC not resolved yet — scan will try again")
 
-    # ── scanning ──────────────────────────────────────────────────────────────
+    # ── scan ──────────────────────────────────────────────────────────────────
 
     def _start_scan(self):
         if not self._gateway_ip:
-            messagebox.showwarning("NetCut Clone", "Gateway not detected.\nMake sure you are connected to WiFi and running as Administrator.")
+            messagebox.showwarning("NetCut", "Gateway not detected yet.")
             return
-        if not self._gateway_mac:
-            # Try one more time before scanning
-            mac = get_mac(self._gateway_ip)
-            if mac:
-                self._gateway_mac = mac
-                self._gw_label.config(text=f"{self._gateway_ip}  ({mac})")
-        self._scan_btn.config(state="disabled", text="Scanning...")
-        self._set_status("Scanning network — this may take a few seconds...")
+        self._scan_btn.configure(state="disabled", text="Scanning…")
+        self._status("Scanning network…")
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
+        own_ip  = get_local_ip()
         subnet  = get_subnet()
         devices = scan_network(subnet)
-        # exclude self and gateway
-        own_ip = get_local_ip()
-        devices = [d for d in devices
+
+        # If gateway MAC is still missing, grab it now from scan results
+        if not self._gateway_mac and self._gateway_ip:
+            for d in devices:
+                if d["ip"] == self._gateway_ip:
+                    self._gateway_mac = d["mac"]
+                    self._spoofer._iface  # touch to keep alive
+                    break
+            if not self._gateway_mac:
+                self._gateway_mac = get_mac(self._gateway_ip)
+
+        # Exclude self and gateway from the device list
+        visible = [d for d in devices
                    if d["ip"] != own_ip and d["ip"] != self._gateway_ip]
-        self.after(0, lambda: self._on_scan_done(devices))
 
-    def _on_scan_done(self, devices):
+        self.after(0, lambda: self._on_scan_done(visible))
+
+    def _on_scan_done(self, devices: list[dict]):
         self._devices = devices
-        self._refresh_table()
-        self._scan_btn.config(state="normal", text="⟳  Scan Network")
-        self._set_status(f"Found {len(devices)} device(s) — double-click or select + Block to cut a device")
+        self._scan_btn.configure(state="normal", text="⟳   Scan")
+        self._rebuild_cards()
+        gw_mac = self._gateway_mac or "not found"
+        self._gw_label.configure(text=f"{self._gateway_ip}  ({gw_mac})")
+        self._status(f"Found {len(devices)} device(s)" +
+                     ("  —  gateway MAC missing, blocking may not work"
+                      if not self._gateway_mac else ""))
 
-    # ── table ─────────────────────────────────────────────────────────────────
+    # ── device cards ──────────────────────────────────────────────────────────
 
-    def _refresh_table(self):
-        for row in self._tree.get_children():
-            self._tree.delete(row)
+    def _rebuild_cards(self):
+        for w in self._card_widgets:
+            w.destroy()
+        self._card_widgets.clear()
+
+        if not self._devices:
+            self._empty_lbl.pack(pady=60)
+            return
+
+        self._empty_lbl.pack_forget()
         for dev in self._devices:
             blocked = self._spoofer.is_blocked(dev["ip"])
-            status  = "🔴 Blocked" if blocked else "🟢 Active"
-            tag     = "blocked"    if blocked else "active"
-            self._tree.insert("", "end", iid=dev["ip"],
-                              values=(dev["ip"], dev["mac"],
-                                      dev["hostname"], status),
-                              tags=(tag,))
-
-    def _selected_device(self) -> dict | None:
-        sel = self._tree.selection()
-        if not sel:
-            messagebox.showinfo("NetCut Clone", "Select a device first.")
-            return None
-        ip = sel[0]
-        return next((d for d in self._devices if d["ip"] == ip), None)
+            card = DeviceCard(
+                self._list, dev, blocked,
+                on_toggle=lambda d=dev: self._toggle(d),
+            )
+            card.pack(fill="x", pady=(0, 10))
+            self._card_widgets.append(card)
 
     # ── block / unblock ───────────────────────────────────────────────────────
 
-    def _block_selected(self):
-        dev = self._selected_device()
-        if not dev:
+    def _toggle(self, dev: dict):
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror(
+                "NetCut",
+                "Gateway MAC address unknown — cannot block.\n\n"
+                "Make sure you are running as Administrator and\n"
+                "Npcap is installed, then scan again."
+            )
             return
-        if self._spoofer.is_blocked(dev["ip"]):
-            self._set_status(f"{dev['ip']} is already blocked.")
-            return
-        self._spoofer.block(dev["ip"], dev["mac"],
-                            self._gateway_ip, self._gateway_mac)
-        self._refresh_table()
-        self._set_status(f"Blocking {dev['hostname']} ({dev['ip']})...")
 
-    def _unblock_selected(self):
-        dev = self._selected_device()
-        if not dev:
-            return
-        self._spoofer.unblock(dev["ip"], dev["mac"],
-                              self._gateway_ip, self._gateway_mac)
-        self._refresh_table()
-        self._set_status(f"Unblocked {dev['hostname']} ({dev['ip']})")
-
-    def _toggle_selected(self):
-        dev = self._selected_device()
-        if not dev:
-            return
         if self._spoofer.is_blocked(dev["ip"]):
-            self._unblock_selected()
+            self._spoofer.unblock(dev["ip"], dev["mac"],
+                                   self._gateway_ip, self._gateway_mac)
+            self._status(f"Unblocked {dev['ip']}")
         else:
-            self._block_selected()
+            self._spoofer.block(dev["ip"], dev["mac"],
+                                 self._gateway_ip, self._gateway_mac)
+            self._status(f"Blocking {dev['ip']}…")
+
+        self._rebuild_cards()
 
     def _unblock_all(self):
         self._spoofer.unblock_all(self._devices,
-                                  self._gateway_ip, self._gateway_mac)
-        self._refresh_table()
-        self._set_status("All devices unblocked.")
+                                   self._gateway_ip or "",
+                                   self._gateway_mac or "")
+        self._rebuild_cards()
+        self._status("All devices unblocked")
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def _set_status(self, msg: str):
-        self._status.config(text=f"  {msg}")
+    def _status(self, msg: str):
+        self._status_lbl.configure(text=f"  {msg}")
 
     def on_close(self):
         self._unblock_all()
