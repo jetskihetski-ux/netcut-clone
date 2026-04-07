@@ -52,9 +52,25 @@ def get_gateway_ip() -> str | None:
 
 
 def get_mac(ip: str) -> str | None:
-    result = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip),
-                 timeout=2, verbose=0)[0]
-    return result[0][1].hwsrc if result else None
+    # Method 1: Windows ARP cache (fast, no admin needed)
+    try:
+        out = subprocess.run(["arp", "-a", ip], capture_output=True, text=True).stdout
+        m = re.search(r"([\da-fA-F]{2}[:-]){5}[\da-fA-F]{2}", out)
+        if m:
+            return m.group(0).replace("-", ":").lower()
+    except Exception:
+        pass
+
+    # Method 2: Scapy ARP request
+    try:
+        result = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip),
+                     timeout=2, verbose=0)[0]
+        if result:
+            return result[0][1].hwsrc
+    except Exception:
+        pass
+
+    return None
 
 
 def resolve_hostname(ip: str) -> str:

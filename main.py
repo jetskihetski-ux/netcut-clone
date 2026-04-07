@@ -153,24 +153,44 @@ class App(tk.Tk):
 
     def _init_network(self):
         def _worker():
-            gw_ip  = get_gateway_ip()
+            gw_ip = get_gateway_ip()
+            # Show IP immediately even before MAC is resolved
+            self.after(0, lambda: self._on_gateway_ip(gw_ip))
             gw_mac = get_mac(gw_ip) if gw_ip else None
-            self.after(0, lambda: self._on_gateway(gw_ip, gw_mac))
+            self.after(0, lambda: self._on_gateway_mac(gw_mac))
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_gateway(self, ip, mac):
-        self._gateway_ip  = ip
+    def _on_gateway_ip(self, ip):
+        self._gateway_ip = ip
+        if ip:
+            self._gw_label.config(text=f"{ip}  (resolving MAC...)")
+            self._set_status(f"Gateway IP: {ip} — looking up MAC address...")
+        else:
+            self._gw_label.config(text="Not found")
+            self._set_status("Gateway not found — are you connected to WiFi?")
+
+    def _on_gateway_mac(self, mac):
         self._gateway_mac = mac
-        label = f"{ip}  ({mac})" if ip and mac else "Not found"
-        self._gw_label.config(text=label)
-        self._set_status(f"Gateway: {label} — ready to scan")
+        ip = self._gateway_ip or "?"
+        if mac:
+            self._gw_label.config(text=f"{ip}  ({mac})")
+            self._set_status(f"Gateway: {ip} — ready to scan")
+        else:
+            self._gw_label.config(text=f"{ip}  (MAC unknown)")
+            self._set_status(f"Gateway IP found ({ip}) but MAC lookup failed — try running as Administrator")
 
     # ── scanning ──────────────────────────────────────────────────────────────
 
     def _start_scan(self):
         if not self._gateway_ip:
-            messagebox.showwarning("NetCut Clone", "Gateway not detected yet. Wait a moment.")
+            messagebox.showwarning("NetCut Clone", "Gateway not detected.\nMake sure you are connected to WiFi and running as Administrator.")
             return
+        if not self._gateway_mac:
+            # Try one more time before scanning
+            mac = get_mac(self._gateway_ip)
+            if mac:
+                self._gateway_mac = mac
+                self._gw_label.config(text=f"{self._gateway_ip}  ({mac})")
         self._scan_btn.config(state="disabled", text="Scanning...")
         self._set_status("Scanning network — this may take a few seconds...")
         threading.Thread(target=self._do_scan, daemon=True).start()
