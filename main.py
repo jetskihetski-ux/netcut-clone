@@ -20,7 +20,7 @@ GREEN  = "#4CAF50"
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("NetCut")
+        self.title("dz_solutions")
         self.geometry("780x520")
         self.configure(fg_color=BG)
         self.resizable(True, True)
@@ -42,7 +42,7 @@ class App(ctk.CTk):
         top.pack(fill="x")
         top.pack_propagate(False)
 
-        ctk.CTkLabel(top, text="NetCut",
+        ctk.CTkLabel(top, text="dz_solutions",
                      font=ctk.CTkFont("Segoe UI", 20, "bold"),
                      text_color="white").pack(side="left", padx=20)
 
@@ -188,7 +188,7 @@ class App(ctk.CTk):
 
     def _scan(self):
         if not self._gateway_ip:
-            messagebox.showwarning("NetCut", "Gateway not detected.\nMake sure you are connected to WiFi.")
+            messagebox.showwarning("dz_solutions", "Gateway not detected.\nMake sure you are connected to WiFi.")
             return
         self._scan_btn.configure(state="disabled", text="Scanning…")
         self._set_status("Scanning…")
@@ -255,10 +255,10 @@ class App(ctk.CTk):
     def _cut(self):
         dev = self._selected_dev()
         if not dev:
-            messagebox.showinfo("NetCut", "Select a device first.")
+            messagebox.showinfo("dz_solutions", "Select a device first.")
             return
         if not self._gateway_ip or not self._gateway_mac:
-            messagebox.showerror("NetCut",
+            messagebox.showerror("dz_solutions",
                 "Gateway MAC not resolved.\n\n"
                 "Run as Administrator, then scan again.")
             return
@@ -271,10 +271,10 @@ class App(ctk.CTk):
     def _timed_cut(self):
         dev = self._selected_dev()
         if not dev:
-            messagebox.showinfo("NetCut", "Select a device first.")
+            messagebox.showinfo("dz_solutions", "Select a device first.")
             return
         if not self._gateway_ip or not self._gateway_mac:
-            messagebox.showerror("NetCut",
+            messagebox.showerror("dz_solutions",
                 "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
             return
         try:
@@ -282,7 +282,7 @@ class App(ctk.CTk):
             if secs < 1:
                 raise ValueError
         except ValueError:
-            messagebox.showwarning("NetCut", "Enter a valid number of seconds (≥ 1).")
+            messagebox.showwarning("dz_solutions", "Enter a valid number of seconds (≥ 1).")
             return
 
         # Cancel any existing timer for this device
@@ -316,7 +316,7 @@ class App(ctk.CTk):
     def _resume(self):
         dev = self._selected_dev()
         if not dev:
-            messagebox.showinfo("NetCut", "Select a device first.")
+            messagebox.showinfo("dz_solutions", "Select a device first.")
             return
         self._cancel_timer(dev["ip"])
         self._spoofer.remove(dev["ip"], dev["mac"],
