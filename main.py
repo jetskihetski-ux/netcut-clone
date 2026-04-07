@@ -1,6 +1,7 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
 import threading
 import customtkinter as ctk
-from tkinter import messagebox
 
 from network import get_subnet, get_gateway_ip, get_mac, scan_network, get_local_ip
 from spoofer import ARPSpoofer
@@ -8,331 +9,174 @@ from vendor import get_device_info
 import names as namestore
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
 
-BG     = "#1A1A2E"
-CARD   = "#2D2D3F"
-CARD2  = "#252537"
+BG     = "#0d0d1a"
+BAR    = "#16213e"
 ACCENT = "#6C63FF"
-RED    = "#EF5350"
-ORANGE = "#FF9800"
-YELLOW = "#FFC107"
+RED    = "#FF5252"
 GREEN  = "#4CAF50"
-TEXT   = "#FFFFFF"
-SUB    = "#888888"
-BORDER = "#3D3D55"
 
-MODE_COLORS = {
-    "normal": (CARD2,   TEXT),
-    "lag":    (ORANGE,  "#111"),
-    "limit":  (YELLOW,  "#111"),
-    "block":  (RED,     TEXT),
-}
-
-MODE_LABELS = {
-    "normal": "● Normal",
-    "lag":    "⚡ Lagging",
-    "limit":  "📉 Limited",
-    "block":  "✂ Blocked",
-}
-
-
-class DeviceCard(ctk.CTkFrame):
-    def __init__(self, parent, device: dict, spoofer: ARPSpoofer,
-                 get_gateway, on_rename, **kw):
-        super().__init__(parent, corner_radius=14, fg_color=CARD, **kw)
-
-        self._dev         = device
-        self._spoofer     = spoofer
-        self._get_gateway = get_gateway
-        self._on_rename   = on_rename
-
-        emoji, vendor_label = get_device_info(device["mac"], device["hostname"])
-        current_mode = spoofer.get_mode(device["ip"])
-
-        # Best display name: custom > hostname > vendor label
-        custom   = namestore.get(device["mac"])
-        hostname = device.get("hostname", "")
-        if custom:
-            display_name = custom
-            sub_name     = vendor_label
-        elif hostname:
-            display_name = hostname
-            sub_name     = vendor_label
-        else:
-            display_name = vendor_label
-            sub_name     = ""
-
-        # ── top row: icon / name / status ────────────────────────────────────
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=14, pady=(14, 4))
-
-        ctk.CTkLabel(top, text=emoji,
-                     font=ctk.CTkFont(size=28), width=40).pack(side="left")
-
-        name_col = ctk.CTkFrame(top, fg_color="transparent")
-        name_col.pack(side="left", padx=10, fill="x", expand=True)
-
-        # Device name row with rename button
-        name_row = ctk.CTkFrame(name_col, fg_color="transparent")
-        name_row.pack(anchor="w", fill="x")
-        ctk.CTkLabel(name_row, text=display_name,
-                     font=ctk.CTkFont("Segoe UI", 14, "bold"),
-                     text_color=TEXT, anchor="w").pack(side="left")
-        ctk.CTkButton(name_row, text="✏", width=24, height=22,
-                      fg_color="transparent", hover_color=BORDER,
-                      text_color=SUB,
-                      font=ctk.CTkFont(size=12),
-                      command=lambda: on_rename(device)).pack(side="left", padx=4)
-
-        # Sub-info: vendor + IP + MAC
-        sub_parts = [p for p in [sub_name, device["ip"], device["mac"]] if p]
-        ctk.CTkLabel(name_col, text="   ·   ".join(sub_parts),
-                     font=ctk.CTkFont("Segoe UI", 11),
-                     text_color=SUB, anchor="w").pack(anchor="w")
-
-        bg, fg = MODE_COLORS[current_mode]
-        self._status_lbl = ctk.CTkLabel(
-            top, text=MODE_LABELS[current_mode],
-            font=ctk.CTkFont("Segoe UI", 11, "bold"),
-            fg_color=bg, text_color=fg,
-            corner_radius=8, width=96, height=28,
-        )
-        self._status_lbl.pack(side="right")
-
-        # ── mode buttons ──────────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(fill="x", padx=14, pady=(4, 0))
-
-        modes = [("Normal", "normal"), ("⚡ Lag", "lag"),
-                 ("📉 Limit", "limit"), ("✂ Block", "block")]
-
-        for lbl, mode in modes:
-            active   = current_mode == mode
-            fg_color = _mode_btn_color(mode) if active else CARD2
-            ctk.CTkButton(
-                btn_row, text=lbl, width=0,
-                font=ctk.CTkFont("Segoe UI", 11, "bold" if active else "normal"),
-                fg_color=fg_color,
-                hover_color=_mode_btn_color(mode),
-                text_color=TEXT if mode in ("block", "normal") else "#111",
-                height=30, corner_radius=8,
-                command=lambda m=mode: self._set_mode(m),
-            ).pack(side="left", expand=True, fill="x", padx=3)
-
-        # ── intensity slider (hidden when Normal/Block) ───────────────────────
-        self._slider_frame = ctk.CTkFrame(self, fg_color="transparent")
-
-        ctk.CTkLabel(self._slider_frame, text="Intensity",
-                     font=ctk.CTkFont("Segoe UI", 10),
-                     text_color=SUB).pack(side="left", padx=(14, 6))
-
-        self._slider = ctk.CTkSlider(
-            self._slider_frame,
-            from_=10, to=100, number_of_steps=18,
-            button_color=ACCENT, progress_color=ACCENT,
-            width=200,
-        )
-        self._slider.set(60)
-        self._slider.pack(side="left")
-
-        self._intensity_lbl = ctk.CTkLabel(
-            self._slider_frame, text="60%",
-            font=ctk.CTkFont("Segoe UI", 10),
-            text_color=SUB, width=36,
-        )
-        self._intensity_lbl.pack(side="left", padx=6)
-        self._slider.configure(command=self._on_slider)
-
-        # spacer
-        ctk.CTkFrame(self, fg_color="transparent", height=10).pack()
-
-        if current_mode in ("lag", "limit"):
-            self._slider_frame.pack(fill="x", pady=(2, 8))
-
-    # ── callbacks ─────────────────────────────────────────────────────────────
-
-    def _set_mode(self, mode: str) -> None:
-        gw_ip, gw_mac = self._get_gateway()
-        if not gw_ip or not gw_mac:
-            messagebox.showerror(
-                "NetCut",
-                "Gateway MAC not resolved.\nRun as Administrator and scan again.",
-            )
-            return
-
-        intensity = int(self._slider.get())
-        ip, mac = self._dev["ip"], self._dev["mac"]
-
-        if mode == "normal":
-            self._spoofer.remove(ip, mac, gw_ip, gw_mac)
-        else:
-            self._spoofer.apply(ip, mac, gw_ip, gw_mac,
-                                mode=mode, intensity=intensity)
-
-        # Update status badge
-        bg, fg = MODE_COLORS[mode]
-        self._status_lbl.configure(text=MODE_LABELS[mode],
-                                    fg_color=bg, text_color=fg)
-
-        # Show/hide slider
-        if mode in ("lag", "limit"):
-            self._slider_frame.pack(fill="x", pady=(2, 8))
-        else:
-            self._slider_frame.pack_forget()
-
-    def _on_slider(self, value: float) -> None:
-        pct = int(value)
-        self._intensity_lbl.configure(text=f"{pct}%")
-        # Live-update if already active
-        mode = self._spoofer.get_mode(self._dev["ip"])
-        if mode in ("lag", "limit"):
-            gw_ip, gw_mac = self._get_gateway()
-            if gw_ip and gw_mac:
-                self._spoofer.apply(self._dev["ip"], self._dev["mac"],
-                                    gw_ip, gw_mac,
-                                    mode=mode, intensity=pct)
-
-
-def _mode_btn_color(mode: str) -> str:
-    return {
-        "normal": CARD2,
-        "lag":    ORANGE,
-        "limit":  YELLOW,
-        "block":  RED,
-    }[mode]
-
-
-# ── Main window ───────────────────────────────────────────────────────────────
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("NetCut")
-        self.geometry("600x700")
+        self.geometry("780x520")
         self.configure(fg_color=BG)
         self.resizable(True, True)
 
         self._spoofer      = ARPSpoofer()
-        self._devices:     list[dict] = []
-        self._gateway_ip:  str | None = None
-        self._gateway_mac: str | None = None
-        self._cards:       list      = []
+        self._devices      = []
+        self._gateway_ip   = None
+        self._gateway_mac  = None
 
         self._build()
         self._init_network()
 
+    # ── UI ────────────────────────────────────────────────────────────────────
+
     def _build(self):
-        # Header
-        hdr = ctk.CTkFrame(self, fg_color="transparent")
-        hdr.pack(fill="x", padx=24, pady=(24, 12))
-        ctk.CTkLabel(hdr, text="NetCut",
-                     font=ctk.CTkFont("Segoe UI", 26, "bold"),
-                     text_color=TEXT).pack(side="left")
+        # ── top bar ──
+        top = ctk.CTkFrame(self, fg_color=BAR, corner_radius=0, height=54)
+        top.pack(fill="x")
+        top.pack_propagate(False)
+
+        ctk.CTkLabel(top, text="NetCut",
+                     font=ctk.CTkFont("Segoe UI", 20, "bold"),
+                     text_color="white").pack(side="left", padx=20)
+
         self._scan_btn = ctk.CTkButton(
-            hdr, text="⟳  Scan",
-            font=ctk.CTkFont("Segoe UI", 12, "bold"),
+            top, text="⟳  Scan Network",
             fg_color=ACCENT, hover_color="#5550CC",
-            width=110, height=38, corner_radius=10,
-            command=self._start_scan,
+            font=ctk.CTkFont("Segoe UI", 12, "bold"),
+            width=140, height=34,
+            command=self._scan,
         )
-        self._scan_btn.pack(side="right")
+        self._scan_btn.pack(side="right", padx=16, pady=10)
 
-        # Info bar
-        info = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
-        info.pack(fill="x", padx=24, pady=(0, 16))
-
-        gw = ctk.CTkFrame(info, fg_color="transparent")
-        gw.pack(side="left", padx=20, pady=10)
-        ctk.CTkLabel(gw, text="GATEWAY",
-                     font=ctk.CTkFont("Segoe UI", 9, "bold"),
-                     text_color=SUB).pack(anchor="w")
-        self._gw_lbl = ctk.CTkLabel(gw, text="Detecting…",
-                                     font=ctk.CTkFont("Segoe UI", 13, "bold"),
-                                     text_color=TEXT)
-        self._gw_lbl.pack(anchor="w")
-
-        own = ctk.CTkFrame(info, fg_color="transparent")
-        own.pack(side="right", padx=20, pady=10)
-        ctk.CTkLabel(own, text="YOUR IP",
-                     font=ctk.CTkFont("Segoe UI", 9, "bold"),
-                     text_color=SUB).pack(anchor="e")
-        ctk.CTkLabel(own, text=get_local_ip(),
-                     font=ctk.CTkFont("Segoe UI", 13, "bold"),
-                     text_color=TEXT).pack(anchor="e")
-
-        # Section row
-        sec = ctk.CTkFrame(self, fg_color="transparent")
-        sec.pack(fill="x", padx=24, pady=(0, 8))
-        ctk.CTkLabel(sec, text="Devices",
-                     font=ctk.CTkFont("Segoe UI", 14, "bold"),
-                     text_color=TEXT).pack(side="left")
-        ctk.CTkButton(sec, text="Restore All",
-                      font=ctk.CTkFont("Segoe UI", 10),
-                      fg_color="transparent", hover_color=CARD,
-                      text_color=SUB, width=88, height=28,
-                      command=self._restore_all).pack(side="right")
-
-        # Device list
-        self._list = ctk.CTkScrollableFrame(
-            self, fg_color="transparent",
-            scrollbar_button_color=CARD2,
-            scrollbar_button_hover_color=BORDER,
+        self._gw_label = ctk.CTkLabel(
+            top, text="Gateway: detecting...",
+            font=ctk.CTkFont("Segoe UI", 11),
+            text_color="#666",
         )
-        self._list.pack(fill="both", expand=True, padx=24, pady=(0, 8))
+        self._gw_label.pack(side="right", padx=4)
 
-        self._empty = ctk.CTkLabel(
-            self._list,
-            text="No devices found\nClick  ⟳ Scan  to discover devices",
-            font=ctk.CTkFont("Segoe UI", 13), text_color=SUB,
+        # ── device table ──
+        tbl = tk.Frame(self, bg=BG)
+        tbl.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("N.Treeview",
+                         background="#16213e",
+                         foreground="white",
+                         fieldbackground="#16213e",
+                         rowheight=38,
+                         font=("Segoe UI", 11))
+        style.configure("N.Treeview.Heading",
+                         background="#0d0d1a",
+                         foreground="#888888",
+                         font=("Segoe UI", 10, "bold"),
+                         relief="flat")
+        style.map("N.Treeview",
+                   background=[("selected", ACCENT)],
+                   foreground=[("selected", "white")])
+
+        self.tree = ttk.Treeview(
+            tbl,
+            columns=("device", "ip", "mac", "status"),
+            show="headings",
+            style="N.Treeview",
+            selectmode="browse",
         )
-        self._empty.pack(pady=60)
+        self.tree.heading("device", text="Device")
+        self.tree.heading("ip",     text="IP Address")
+        self.tree.heading("mac",    text="MAC Address")
+        self.tree.heading("status", text="Status")
+        self.tree.column("device", width=240, anchor="w")
+        self.tree.column("ip",     width=140, anchor="w")
+        self.tree.column("mac",    width=180, anchor="w")
+        self.tree.column("status", width=110, anchor="center")
 
-        # Status bar
-        bar = ctk.CTkFrame(self, fg_color=CARD2, corner_radius=0, height=34)
-        bar.pack(fill="x", side="bottom")
-        self._status_lbl = ctk.CTkLabel(bar, text="Ready",
-                                         font=ctk.CTkFont("Segoe UI", 10),
-                                         text_color=SUB)
-        self._status_lbl.pack(side="left", padx=16, pady=7)
+        self.tree.tag_configure("online", foreground="#4CAF50")
+        self.tree.tag_configure("cut",    foreground="#FF5252",
+                                           background="#1e0a0a")
 
-    # ── network ───────────────────────────────────────────────────────────────
+        sb = ttk.Scrollbar(tbl, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.tree.bind("<Double-1>", lambda _: self._toggle())
+        self.tree.bind("<Button-3>", self._right_click)
+
+        # ── bottom bar ──
+        bot = ctk.CTkFrame(self, fg_color=BAR, corner_radius=0, height=54)
+        bot.pack(fill="x", side="bottom")
+        bot.pack_propagate(False)
+
+        ctk.CTkButton(bot, text="✂  CUT",
+                       fg_color=RED, hover_color="#c0392b",
+                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                       width=120, height=36,
+                       command=self._cut).pack(side="left", padx=(14, 6), pady=9)
+
+        ctk.CTkButton(bot, text="▶  Resume",
+                       fg_color=GREEN, hover_color="#27ae60",
+                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                       text_color="white",
+                       width=120, height=36,
+                       command=self._resume).pack(side="left", padx=6, pady=9)
+
+        ctk.CTkButton(bot, text="Resume All",
+                       fg_color="transparent", hover_color="#2d2d3f",
+                       text_color="#666",
+                       width=100, height=36,
+                       command=self._resume_all).pack(side="left", padx=6, pady=9)
+
+        self._status = ctk.CTkLabel(bot, text="Ready — click Scan",
+                                     font=ctk.CTkFont("Segoe UI", 11),
+                                     text_color="#666")
+        self._status.pack(side="right", padx=16)
+
+    # ── network init ──────────────────────────────────────────────────────────
 
     def _init_network(self):
         def _w():
             ip  = get_gateway_ip()
-            self.after(0, lambda: self._on_gw_ip(ip))
+            self.after(0, lambda: self._set_gw(ip, None))
             mac = get_mac(ip) if ip else None
-            self.after(0, lambda: self._on_gw_mac(mac))
+            self.after(0, lambda: self._set_gw(ip, mac))
         threading.Thread(target=_w, daemon=True).start()
 
-    def _on_gw_ip(self, ip):
-        self._gateway_ip = ip
-        self._gw_lbl.configure(text=ip or "Not found")
-
-    def _on_gw_mac(self, mac):
+    def _set_gw(self, ip, mac):
+        self._gateway_ip  = ip
         self._gateway_mac = mac
-        ip = self._gateway_ip or "?"
-        self._gw_lbl.configure(
-            text=f"{ip}  ({mac})" if mac else f"{ip}  (MAC pending)"
-        )
-        self._status("Ready — click Scan")
+        if ip and mac:
+            self._gw_label.configure(text=f"Gateway: {ip}  ({mac})")
+        elif ip:
+            self._gw_label.configure(text=f"Gateway: {ip}  (resolving…)")
+        else:
+            self._gw_label.configure(text="Gateway: not found")
 
-    def _start_scan(self):
+    # ── scan ──────────────────────────────────────────────────────────────────
+
+    def _scan(self):
         if not self._gateway_ip:
-            messagebox.showwarning("NetCut", "Gateway not detected yet.")
+            messagebox.showwarning("NetCut", "Gateway not detected.\nMake sure you are connected to WiFi.")
             return
         self._scan_btn.configure(state="disabled", text="Scanning…")
-        self._status("Scanning network…")
+        self._set_status("Scanning…")
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
         own  = get_local_ip()
         devs = scan_network(
             get_subnet(),
-            on_progress=lambda msg: self.after(0, lambda m=msg: self._status(m)),
+            on_progress=lambda m: self.after(0, lambda msg=m: self._set_status(msg)),
         )
 
+        # Grab gateway MAC from scan if still missing
         if not self._gateway_mac and self._gateway_ip:
             for d in devs:
                 if d["ip"] == self._gateway_ip:
@@ -340,6 +184,8 @@ class App(ctk.CTk):
                     break
             if not self._gateway_mac:
                 self._gateway_mac = get_mac(self._gateway_ip)
+            if self._gateway_mac:
+                self.after(0, lambda: self._set_gw(self._gateway_ip, self._gateway_mac))
 
         visible = [d for d in devs
                    if d["ip"] != own and d["ip"] != self._gateway_ip]
@@ -347,74 +193,125 @@ class App(ctk.CTk):
 
     def _on_scan_done(self, devices):
         self._devices = devices
-        self._scan_btn.configure(state="normal", text="⟳  Scan")
-        gm = self._gateway_mac or "not found"
-        self._gw_lbl.configure(text=f"{self._gateway_ip}  ({gm})")
-        self._rebuild()
-        self._status(f"Found {len(devices)} device(s)")
+        self._scan_btn.configure(state="normal", text="⟳  Scan Network")
+        self._refresh_table()
+        self._set_status(f"{len(devices)} device(s) found  —  double-click or select + CUT")
 
-    # ── cards ─────────────────────────────────────────────────────────────────
+    # ── table ─────────────────────────────────────────────────────────────────
 
-    def _rebuild(self):
-        for c in self._cards:
-            c.destroy()
-        self._cards.clear()
+    def _refresh_table(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
 
-        if not self._devices:
-            self._empty.pack(pady=60)
-            return
-
-        self._empty.pack_forget()
         for dev in self._devices:
-            card = DeviceCard(
-                self._list, dev, self._spoofer,
-                get_gateway=lambda: (self._gateway_ip, self._gateway_mac),
-                on_rename=self._show_rename,
-            )
-            card.pack(fill="x", pady=(0, 10))
-            self._cards.append(card)
+            emoji, vendor = get_device_info(dev["mac"], dev["hostname"])
+            custom   = namestore.get(dev["mac"])
+            hostname = dev.get("hostname", "")
+            name     = custom or hostname or vendor
+            display  = f"{emoji}  {name}"
 
-    def _show_rename(self, dev: dict):
-        """Pop up a dialog to set a custom name for a device."""
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Rename Device")
-        dialog.geometry("340x160")
-        dialog.configure(fg_color=BG)
-        dialog.grab_set()
+            cut  = self._spoofer.is_active(dev["ip"])
+            tag  = "cut" if cut else "online"
+            stat = "✂  CUT" if cut else "● Online"
 
-        current = namestore.get(dev["mac"]) or dev.get("hostname") or ""
-        ctk.CTkLabel(dialog, text=f"Name for  {dev['ip']}",
-                     font=ctk.CTkFont("Segoe UI", 13),
-                     text_color=TEXT).pack(pady=(20, 8))
+            self.tree.insert("", "end", iid=dev["ip"],
+                             values=(display, dev["ip"], dev["mac"], stat),
+                             tags=(tag,))
 
-        entry = ctk.CTkEntry(dialog, width=260, placeholder_text="e.g. PS5, Mum's Phone…")
-        entry.insert(0, current)
-        entry.pack()
+    def _selected_dev(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        ip = sel[0]
+        return next((d for d in self._devices if d["ip"] == ip), None)
 
-        def _save():
-            name = entry.get().strip()
-            if name:
-                namestore.set_name(dev["mac"], name)
-            else:
-                namestore.clear(dev["mac"])
-            dialog.destroy()
-            self._rebuild()
+    # ── cut / resume ──────────────────────────────────────────────────────────
 
-        ctk.CTkButton(dialog, text="Save", command=_save,
-                      fg_color=ACCENT, width=120).pack(pady=14)
+    def _cut(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("NetCut", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("NetCut",
+                "Gateway MAC not resolved.\n\n"
+                "Run as Administrator, then scan again.")
+            return
+        self._spoofer.apply(dev["ip"], dev["mac"],
+                             self._gateway_ip, self._gateway_mac,
+                             mode="block")
+        self._refresh_table()
+        self._set_status(f"Cutting {dev['ip']}…")
 
-    def _restore_all(self):
+    def _resume(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("NetCut", "Select a device first.")
+            return
+        self._spoofer.remove(dev["ip"], dev["mac"],
+                              self._gateway_ip or "",
+                              self._gateway_mac or "")
+        self._refresh_table()
+        self._set_status(f"Resumed {dev['ip']}")
+
+    def _toggle(self):
+        dev = self._selected_dev()
+        if not dev:
+            return
+        if self._spoofer.is_active(dev["ip"]):
+            self._resume()
+        else:
+            self._cut()
+
+    def _resume_all(self):
         self._spoofer.remove_all(self._devices,
                                   self._gateway_ip or "",
                                   self._gateway_mac or "")
-        self._rebuild()
-        self._status("All devices restored")
+        self._refresh_table()
+        self._set_status("All devices resumed")
 
-    def _status(self, msg: str):
-        self._status_lbl.configure(text=f"  {msg}")
+    # ── right-click rename ────────────────────────────────────────────────────
+
+    def _right_click(self, event):
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return
+        self.tree.selection_set(row)
+        dev = self._selected_dev()
+        if not dev:
+            return
+
+        menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="white",
+                       activebackground=ACCENT, activeforeground="white")
+        menu.add_command(label="✏  Rename device",
+                         command=lambda: self._rename(dev))
+        menu.add_separator()
+        menu.add_command(label="✂  Cut",    command=self._cut)
+        menu.add_command(label="▶  Resume", command=self._resume)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _rename(self, dev):
+        current = namestore.get(dev["mac"]) or dev.get("hostname", "")
+        name = simpledialog.askstring(
+            "Rename Device",
+            f"Name for {dev['ip']}:",
+            initialvalue=current,
+            parent=self,
+        )
+        if name is not None:
+            if name.strip():
+                namestore.set_name(dev["mac"], name.strip())
+            else:
+                namestore.clear(dev["mac"])
+            self._refresh_table()
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _set_status(self, msg: str):
+        self._status.configure(text=msg)
 
     def on_close(self):
-        self._restore_all()
+        self._resume_all()
         self.destroy()
 
 
