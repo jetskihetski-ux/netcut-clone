@@ -21,9 +21,34 @@ def get_subnet() -> str:
 
 
 def get_gateway_ip() -> str | None:
-    out = subprocess.run(["ipconfig"], capture_output=True, text=True).stdout
-    m = re.search(r"Default Gateway[.\s]+:\s*([\d.]+)", out)
-    return m.group(1).strip() if m else None
+    # Method 1: scapy routing table (most reliable)
+    try:
+        gw = conf.route.route("0.0.0.0")[2]
+        if gw and gw != "0.0.0.0":
+            return gw
+    except Exception:
+        pass
+
+    # Method 2: route print
+    try:
+        out = subprocess.run(["route", "print", "0.0.0.0"],
+                             capture_output=True, text=True).stdout
+        m = re.search(r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d.]+)", out)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+
+    # Method 3: ipconfig fallback
+    try:
+        out = subprocess.run(["ipconfig"], capture_output=True, text=True).stdout
+        m = re.search(r"Default Gateway[^:]*:\s*([\d.]+)", out)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+
+    return None
 
 
 def get_mac(ip: str) -> str | None:
