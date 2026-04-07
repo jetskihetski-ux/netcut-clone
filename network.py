@@ -75,10 +75,28 @@ def get_mac(ip: str) -> str | None:
 
 
 def resolve_hostname(ip: str) -> str:
+    """Try DNS, then NetBIOS to get a human-readable device name."""
+    # DNS reverse lookup
     try:
-        return socket.gethostbyaddr(ip)[0]
+        name = socket.gethostbyaddr(ip)[0]
+        if name and name != ip:
+            return name.split(".")[0]   # strip .local / domain suffix
     except Exception:
-        return ip
+        pass
+
+    # NetBIOS (works for Windows PCs and many devices)
+    try:
+        out = subprocess.run(
+            ["nbtstat", "-A", ip],
+            capture_output=True, text=True, timeout=4,
+        ).stdout
+        m = re.search(r"^\s*(\S+)\s+<00>\s+UNIQUE", out, re.MULTILINE)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+
+    return ""   # empty = unknown, caller decides what to show
 
 
 def _scan_scapy(subnet: str) -> list[dict]:

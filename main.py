@@ -5,6 +5,7 @@ from tkinter import messagebox
 from network import get_subnet, get_gateway_ip, get_mac, scan_network, get_local_ip
 from spoofer import ARPSpoofer
 from vendor import get_device_info
+import names as namestore
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -38,15 +39,29 @@ MODE_LABELS = {
 
 class DeviceCard(ctk.CTkFrame):
     def __init__(self, parent, device: dict, spoofer: ARPSpoofer,
-                 get_gateway, **kw):
+                 get_gateway, on_rename, **kw):
         super().__init__(parent, corner_radius=14, fg_color=CARD, **kw)
 
-        self._dev        = device
-        self._spoofer    = spoofer
+        self._dev         = device
+        self._spoofer     = spoofer
         self._get_gateway = get_gateway
+        self._on_rename   = on_rename
 
-        emoji, label = get_device_info(device["mac"], device["hostname"])
+        emoji, vendor_label = get_device_info(device["mac"], device["hostname"])
         current_mode = spoofer.get_mode(device["ip"])
+
+        # Best display name: custom > hostname > vendor label
+        custom   = namestore.get(device["mac"])
+        hostname = device.get("hostname", "")
+        if custom:
+            display_name = custom
+            sub_name     = vendor_label
+        elif hostname:
+            display_name = hostname
+            sub_name     = vendor_label
+        else:
+            display_name = vendor_label
+            sub_name     = ""
 
         # ── top row: icon / name / status ────────────────────────────────────
         top = ctk.CTkFrame(self, fg_color="transparent")
@@ -57,10 +72,22 @@ class DeviceCard(ctk.CTkFrame):
 
         name_col = ctk.CTkFrame(top, fg_color="transparent")
         name_col.pack(side="left", padx=10, fill="x", expand=True)
-        ctk.CTkLabel(name_col, text=label,
+
+        # Device name row with rename button
+        name_row = ctk.CTkFrame(name_col, fg_color="transparent")
+        name_row.pack(anchor="w", fill="x")
+        ctk.CTkLabel(name_row, text=display_name,
                      font=ctk.CTkFont("Segoe UI", 14, "bold"),
-                     text_color=TEXT, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(name_col, text=f"{device['ip']}   ·   {device['mac']}",
+                     text_color=TEXT, anchor="w").pack(side="left")
+        ctk.CTkButton(name_row, text="✏", width=24, height=22,
+                      fg_color="transparent", hover_color=BORDER,
+                      text_color=SUB,
+                      font=ctk.CTkFont(size=12),
+                      command=lambda: on_rename(device)).pack(side="left", padx=4)
+
+        # Sub-info: vendor + IP + MAC
+        sub_parts = [p for p in [sub_name, device["ip"], device["mac"]] if p]
+        ctk.CTkLabel(name_col, text="   ·   ".join(sub_parts),
                      font=ctk.CTkFont("Segoe UI", 11),
                      text_color=SUB, anchor="w").pack(anchor="w")
 
@@ -342,9 +369,39 @@ class App(ctk.CTk):
             card = DeviceCard(
                 self._list, dev, self._spoofer,
                 get_gateway=lambda: (self._gateway_ip, self._gateway_mac),
+                on_rename=self._show_rename,
             )
             card.pack(fill="x", pady=(0, 10))
             self._cards.append(card)
+
+    def _show_rename(self, dev: dict):
+        """Pop up a dialog to set a custom name for a device."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Rename Device")
+        dialog.geometry("340x160")
+        dialog.configure(fg_color=BG)
+        dialog.grab_set()
+
+        current = namestore.get(dev["mac"]) or dev.get("hostname") or ""
+        ctk.CTkLabel(dialog, text=f"Name for  {dev['ip']}",
+                     font=ctk.CTkFont("Segoe UI", 13),
+                     text_color=TEXT).pack(pady=(20, 8))
+
+        entry = ctk.CTkEntry(dialog, width=260, placeholder_text="e.g. PS5, Mum's Phone…")
+        entry.insert(0, current)
+        entry.pack()
+
+        def _save():
+            name = entry.get().strip()
+            if name:
+                namestore.set_name(dev["mac"], name)
+            else:
+                namestore.clear(dev["mac"])
+            dialog.destroy()
+            self._rebuild()
+
+        ctk.CTkButton(dialog, text="Save", command=_save,
+                      fg_color=ACCENT, width=120).pack(pady=14)
 
     def _restore_all(self):
         self._spoofer.remove_all(self._devices,
