@@ -97,27 +97,25 @@ def _scan_scapy(subnet: str) -> list[dict]:
 
 
 def _scan_arp_cache() -> list[dict]:
-    """
-    Fallback: read devices already in the Windows ARP cache.
-    Works without Scapy/admin — catches any device that recently
-    communicated on the network.
-    """
+    """Read devices from Windows ARP cache (arp -a)."""
     out = subprocess.run(["arp", "-a"], capture_output=True, text=True).stdout
+
+    # Match lines like:  192.168.0.105    a8-8f-d9-4a-58-23    dynamic
+    pattern = re.compile(
+        r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"   # IP
+        r"\s+"
+        r"([\da-fA-F]{2}-[\da-fA-F]{2}-[\da-fA-F]{2}"
+        r"-[\da-fA-F]{2}-[\da-fA-F]{2}-[\da-fA-F]{2})"  # MAC xx-xx-xx-xx-xx-xx
+        r"\s+dynamic"                               # only dynamic entries
+    )
+
     devices = []
-    for line in out.splitlines():
-        # Lines look like:  192.168.0.5      be-22-28-ff-b1-2e     dynamic
-        m = re.match(r"\s+([\d.]+)\s+([\da-fA-F]{2}[:-]){5}[\da-fA-F]{2}", line)
-        if not m:
-            continue
-        parts = line.split()
-        ip  = parts[0]
-        mac = parts[1].replace("-", ":").lower()
-        # Skip multicast/broadcast entries
-        if ip.startswith("224.") or ip == "255.255.255.255":
+    for ip, mac in pattern.findall(out):
+        if ip.startswith("224.") or ip.startswith("239.") or ip == "255.255.255.255":
             continue
         devices.append({
             "ip":       ip,
-            "mac":      mac,
+            "mac":      mac.replace("-", ":").lower(),
             "hostname": resolve_hostname(ip),
         })
     return devices
