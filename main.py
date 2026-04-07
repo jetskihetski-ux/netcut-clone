@@ -29,6 +29,7 @@ class App(ctk.CTk):
         self._devices      = []
         self._gateway_ip   = None
         self._gateway_mac  = None
+        self._timers: dict[str, str] = {}   # ip -> after-id for countdown
 
         self._build()
         self._init_network()
@@ -133,6 +134,30 @@ class App(ctk.CTk):
                        text_color="#666",
                        width=100, height=36,
                        command=self._resume_all).pack(side="left", padx=6, pady=9)
+
+        # ── timed cut ──
+        sep = ctk.CTkFrame(bot, fg_color="#333355", width=1, height=34)
+        sep.pack(side="left", padx=10, pady=10)
+
+        self._timer_var = tk.StringVar(value="5")
+        timer_entry = ctk.CTkEntry(
+            bot, textvariable=self._timer_var,
+            width=46, height=34,
+            font=ctk.CTkFont("Segoe UI", 12),
+            justify="center",
+        )
+        timer_entry.pack(side="left", padx=(0, 4), pady=9)
+
+        ctk.CTkLabel(bot, text="sec",
+                     font=ctk.CTkFont("Segoe UI", 11),
+                     text_color="#666").pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(bot, text="⏱  Timed Cut",
+                       fg_color="#8B4513", hover_color="#6B3410",
+                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                       text_color="white",
+                       width=130, height=36,
+                       command=self._timed_cut).pack(side="left", padx=(0, 6), pady=9)
 
         self._status = ctk.CTkLabel(bot, text="Ready — click Scan",
                                      font=ctk.CTkFont("Segoe UI", 11),
@@ -243,11 +268,57 @@ class App(ctk.CTk):
         self._refresh_table()
         self._set_status(f"Cutting {dev['ip']}…")
 
+    def _timed_cut(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("NetCut", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("NetCut",
+                "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
+            return
+        try:
+            secs = int(self._timer_var.get())
+            if secs < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("NetCut", "Enter a valid number of seconds (≥ 1).")
+            return
+
+        # Cancel any existing timer for this device
+        self._cancel_timer(dev["ip"])
+
+        self._spoofer.apply(dev["ip"], dev["mac"],
+                             self._gateway_ip, self._gateway_mac,
+                             mode="block")
+        self._refresh_table()
+        self._countdown(dev, secs)
+
+    def _countdown(self, dev: dict, remaining: int):
+        self._set_status(f"Cutting {dev['ip']} — resuming in {remaining}s")
+        if remaining <= 0:
+            self._timers.pop(dev["ip"], None)
+            # Auto-resume
+            self._spoofer.remove(dev["ip"], dev["mac"],
+                                  self._gateway_ip or "",
+                                  self._gateway_mac or "")
+            self._refresh_table()
+            self._set_status(f"Timer done — {dev['ip']} resumed")
+            return
+        after_id = self.after(1000, lambda: self._countdown(dev, remaining - 1))
+        self._timers[dev["ip"]] = after_id
+
+    def _cancel_timer(self, ip: str):
+        after_id = self._timers.pop(ip, None)
+        if after_id:
+            self.after_cancel(after_id)
+
     def _resume(self):
         dev = self._selected_dev()
         if not dev:
             messagebox.showinfo("NetCut", "Select a device first.")
             return
+        self._cancel_timer(dev["ip"])
         self._spoofer.remove(dev["ip"], dev["mac"],
                               self._gateway_ip or "",
                               self._gateway_mac or "")
@@ -264,6 +335,8 @@ class App(ctk.CTk):
             self._cut()
 
     def _resume_all(self):
+        for ip in list(self._timers):
+            self._cancel_timer(ip)
         self._spoofer.remove_all(self._devices,
                                   self._gateway_ip or "",
                                   self._gateway_mac or "")
