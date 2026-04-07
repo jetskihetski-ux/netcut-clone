@@ -146,8 +146,7 @@ def ping_sweep(subnet: str) -> None:
         t.join(timeout=1.5)
 
 
-def scan_network(subnet: str,
-                 on_progress: callable | None = None) -> list[dict]:
+def scan_network(subnet: str, on_progress=None) -> list[dict]:
     """
     Full network scan:
       1. Ping sweep — wakes idle phones/laptops, populates ARP cache
