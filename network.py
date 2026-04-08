@@ -4,7 +4,7 @@ import subprocess
 import threading
 import re
 
-from scapy.all import ARP, Ether, srp, srp1, conf
+from scapy.all import ARP, Ether, srp, conf
 
 
 def get_local_ip() -> str:
@@ -165,17 +165,12 @@ def ping_sweep(subnet: str) -> None:
 
 
 def _is_alive(ip: str) -> bool:
-    """Returns True if the device responds to an ARP request.
-    Uses ARP instead of ping — phones, consoles, and most devices
-    block ICMP ping but always respond to ARP."""
-    try:
-        ans = srp1(
-            Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip),
-            timeout=1.5, verbose=0,
-        )
-        return ans is not None
-    except Exception:
-        return False
+    """Returns True only if the device responds to a ping right now."""
+    result = subprocess.run(
+        ["ping", "-n", "1", "-w", "800", ip],
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def scan_network(subnet: str, on_progress=None) -> list[dict]:
