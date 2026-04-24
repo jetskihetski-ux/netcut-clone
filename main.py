@@ -419,11 +419,11 @@ class App(ctk.CTk):
         # Cancel any existing timer for this device
         self._cancel_timer(dev["ip"])
 
-        self._spoofer.apply(dev["ip"], dev["mac"],
-                             self._gateway_ip, self._gateway_mac,
-                             mode="block")
+        gw_ip  = self._gateway_ip
+        gw_mac = self._gateway_mac
+        self._spoofer.apply(dev["ip"], dev["mac"], gw_ip, gw_mac, mode="block")
         self._refresh_table()
-        self._countdown(dev, secs)
+        self._countdown(dev, secs, gw_ip, gw_mac)
 
     def _delayed_cut(self):
         dev = self._selected_dev()
@@ -463,18 +463,15 @@ class App(ctk.CTk):
         after_id = self.after(1000, lambda: self._pre_cut_countdown(dev, remaining - 1))
         self._delay_timers[dev["ip"]] = after_id
 
-    def _countdown(self, dev: dict, remaining: int):
+    def _countdown(self, dev: dict, remaining: int, gw_ip: str, gw_mac: str):
         self._set_status(f"Cutting {dev['ip']} — resuming in {remaining}s")
         if remaining <= 0:
             self._timers.pop(dev["ip"], None)
-            # Auto-resume
-            self._spoofer.remove(dev["ip"], dev["mac"],
-                                  self._gateway_ip or "",
-                                  self._gateway_mac or "")
+            self._spoofer.remove(dev["ip"], dev["mac"], gw_ip, gw_mac)
             self._refresh_table()
             self._set_status(f"Timer done — {dev['ip']} resumed")
             return
-        after_id = self.after(1000, lambda: self._countdown(dev, remaining - 1))
+        after_id = self.after(1000, lambda: self._countdown(dev, remaining - 1, gw_ip, gw_mac))
         self._timers[dev["ip"]] = after_id
 
     def _cancel_timer(self, ip: str):
