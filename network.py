@@ -143,20 +143,39 @@ def resolve_hostname(ip: str) -> str:
     return ""   # empty = unknown, caller decides what to show
 
 
-def _scan_scapy(subnet: str) -> list[dict]:
-    """ARP scan using Scapy (requires Npcap + admin)."""
+# Sony/PlayStation MAC prefixes
+SONY_PREFIXES = {
+    "00:04:1f", "00:13:a9", "00:15:c1", "00:19:c5",
+    "00:1d:0d", "00:1f:a7", "00:24:8d", "00:d9:d1",
+    "28:37:37", "f8:d0:ac", "70:9e:29", "bc:60:a7",
+    "00:04:1f", "a8:e3:ee", "78:c4:0e",
+}
+
+def _is_sony(mac: str) -> bool:
+    return mac[:8].lower() in SONY_PREFIXES
+
+
+def _scan_scapy(subnet: str, iface: str | None = None) -> list[dict]:
+    """ARP scan using Scapy — longer timeout to catch PS5/consoles."""
+    kwargs = {"timeout": 6, "verbose": 0, "retry": 2}
+    if iface:
+        kwargs["iface"] = iface
     result = srp(
         Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=subnet),
-        timeout=3, verbose=0,
+        **kwargs,
     )[0]
-    return [
-        {
+    devices = []
+    for _, pkt in result:
+        hostname = resolve_hostname(pkt.psrc)
+        # Tag Sony devices as PlayStation
+        if _is_sony(pkt.hwsrc) and not hostname:
+            hostname = "PlayStation"
+        devices.append({
             "ip":       pkt.psrc,
             "mac":      pkt.hwsrc,
-            "hostname": resolve_hostname(pkt.psrc),
-        }
-        for _, pkt in result
-    ]
+            "hostname": hostname,
+        })
+    return devices
 
 
 def _scan_arp_cache() -> list[dict]:
@@ -217,11 +236,11 @@ def _is_alive(ip: str) -> bool:
     return result.returncode == 0
 
 
-def scan_network(subnet: str, on_progress=None) -> list[dict]:
+def scan_network(subnet: str, on_progress=None, iface: str | None = None) -> list[dict]:
     """
     Full network scan:
       1. Ping sweep  — wakes idle devices, populates ARP cache
-      2. Scapy ARP   — active ARP discovery
+      2. Scapy ARP   — active ARP discovery (longer timeout for PS5/consoles)
       3. ARP cache   — catches anything Scapy missed
       4. Verify alive — removes stale/offline entries from the list
     """
@@ -232,10 +251,10 @@ def scan_network(subnet: str, on_progress=None) -> list[dict]:
     ping_sweep(subnet)
 
     if on_progress:
-        on_progress("Running ARP scan…")
+        on_progress("Running ARP scan (this takes ~6s to catch consoles)…")
 
     try:
-        for d in _scan_scapy(subnet):
+        for d in _scan_scapy(subnet, iface=iface):
             merged[d["ip"]] = d
     except Exception as e:
         print(f"[scan] Scapy failed: {e}")

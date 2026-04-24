@@ -25,15 +25,17 @@ class App(ctk.CTk):
         self.configure(fg_color=BG)
         self.resizable(True, True)
 
-        self._spoofer       = ARPSpoofer()
         self._devices       = []
         self._gateway_ip    = None
         self._gateway_mac   = None
         self._timers:  dict[str, str] = {}
-        self._delay_timers: dict[str, str] = {}   # ip -> after-id for pre-cut countdown
-        self._iface         = None   # selected interface
+        self._delay_timers: dict[str, str] = {}
+        self._iface         = None
 
-        self._build()
+        self._build()   # sets self._iface from interface picker
+
+        # init spoofer AFTER build so it picks up the selected interface
+        self._spoofer = ARPSpoofer(iface=self._iface)
         self._init_network()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -257,6 +259,8 @@ class App(ctk.CTk):
         self._iface       = self._iface_map.get(label)
         self._gateway_ip  = None
         self._gateway_mac = None
+        # update spoofer to use the new interface
+        self._spoofer._iface = self._iface
         self._gw_label.configure(text="Gateway: detecting...")
         self._init_network()
         self._set_status(f"Interface changed — click Scan to refresh")
@@ -296,6 +300,7 @@ class App(ctk.CTk):
         devs = scan_network(
             get_subnet(self._iface),
             on_progress=lambda m: self.after(0, lambda msg=m: self._set_status(msg)),
+            iface=self._iface,
         )
 
         # Grab gateway MAC from scan if still missing
