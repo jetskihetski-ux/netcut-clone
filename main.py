@@ -368,6 +368,10 @@ class App(ctk.CTk):
         if not dev:
             messagebox.showinfo("dz_solutions", "Select a device first.")
             return
+        # Toggle: if already cutting, resume instead
+        if self._spoofer.is_active(dev["ip"]):
+            self._resume()
+            return
         if not self._gateway_ip or not self._gateway_mac:
             messagebox.showerror("dz_solutions",
                 "Gateway MAC not resolved.\n\n"

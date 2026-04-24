@@ -130,10 +130,10 @@ class ARPSpoofer:
             return
         self._send(target_mac,
                    ARP(op=2, pdst=target_ip,  hwdst=target_mac,
-                       psrc=gateway_ip, hwsrc=gateway_mac), count=4)
+                       psrc=gateway_ip, hwsrc=gateway_mac), count=10)
         self._send(gateway_mac,
                    ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac,
-                       psrc=target_ip, hwsrc=target_mac),  count=4)
+                       psrc=target_ip, hwsrc=target_mac),  count=10)
 
     def _send(self, dst_mac: str, arp_pkt,
               count: int = 1) -> bool:
