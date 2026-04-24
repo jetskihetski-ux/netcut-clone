@@ -322,6 +322,10 @@ class App(ctk.CTk):
     # ── table ─────────────────────────────────────────────────────────────────
 
     def _refresh_table(self):
+        # remember current selection before wiping rows
+        selected = self.tree.selection()
+        sel_ip   = selected[0] if selected else None
+
         for row in self.tree.get_children():
             self.tree.delete(row)
 
@@ -339,6 +343,11 @@ class App(ctk.CTk):
             self.tree.insert("", "end", iid=dev["ip"],
                              values=(display, dev["ip"], dev["mac"], stat),
                              tags=(tag,))
+
+        # restore selection
+        if sel_ip and self.tree.exists(sel_ip):
+            self.tree.selection_set(sel_ip)
+            self.tree.focus(sel_ip)
 
     def _selected_dev(self):
         sel = self.tree.selection()
