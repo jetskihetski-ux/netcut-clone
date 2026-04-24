@@ -4,10 +4,38 @@ import subprocess
 import threading
 import re
 
-from scapy.all import ARP, Ether, srp, conf
+from scapy.all import ARP, Ether, srp, conf, get_if_list, get_if_addr
 
 
-def get_local_ip() -> str:
+def get_interfaces() -> list[dict]:
+    """Return all active network interfaces with name, IP, and type guess."""
+    ifaces = []
+    for name in get_if_list():
+        try:
+            ip = get_if_addr(name)
+            if not ip or ip == "0.0.0.0" or ip.startswith("127."):
+                continue
+            lower = name.lower()
+            if any(k in lower for k in ("wi-fi", "wifi", "wireless", "wlan", "802.11")):
+                kind = "WiFi"
+            elif any(k in lower for k in ("eth", "ethernet", "local area")):
+                kind = "Ethernet"
+            else:
+                kind = "Other"
+            ifaces.append({"name": name, "ip": ip, "kind": kind})
+        except Exception:
+            continue
+    return ifaces
+
+
+def get_local_ip(iface: str | None = None) -> str:
+    if iface:
+        try:
+            ip = get_if_addr(iface)
+            if ip and ip != "0.0.0.0":
+                return ip
+        except Exception:
+            pass
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -16,8 +44,8 @@ def get_local_ip() -> str:
         s.close()
 
 
-def get_subnet() -> str:
-    ip = get_local_ip()
+def get_subnet(iface: str | None = None) -> str:
+    ip = get_local_ip(iface)
     return str(ipaddress.IPv4Network(f"{ip}/24", strict=False))
 
 

@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox, simpledialog
 import threading
 import customtkinter as ctk
 
-from network import get_subnet, get_gateway_ip, get_mac, scan_network, get_local_ip
+from network import get_subnet, get_gateway_ip, get_mac, scan_network, get_local_ip, get_interfaces
 from spoofer import ARPSpoofer
 from vendor import get_device_info
 import names as namestore
@@ -25,11 +25,13 @@ class App(ctk.CTk):
         self.configure(fg_color=BG)
         self.resizable(True, True)
 
-        self._spoofer      = ARPSpoofer()
-        self._devices      = []
-        self._gateway_ip   = None
-        self._gateway_mac  = None
-        self._timers: dict[str, str] = {}   # ip -> after-id for countdown
+        self._spoofer       = ARPSpoofer()
+        self._devices       = []
+        self._gateway_ip    = None
+        self._gateway_mac   = None
+        self._timers:  dict[str, str] = {}
+        self._delay_timers: dict[str, str] = {}   # ip -> after-id for pre-cut countdown
+        self._iface         = None   # selected interface
 
         self._build()
         self._init_network()
@@ -55,12 +57,40 @@ class App(ctk.CTk):
         )
         self._scan_btn.pack(side="right", padx=16, pady=10)
 
+        # ── Interface picker ──
+        ifaces = get_interfaces()
+        self._iface_map = {f"{i['kind']} — {i['ip']}": i["name"] for i in ifaces}
+        iface_labels    = list(self._iface_map.keys()) or ["No interfaces found"]
+
+        self._iface_var = tk.StringVar(value=iface_labels[0])
+        self._iface_menu = ctk.CTkOptionMenu(
+            top,
+            variable   = self._iface_var,
+            values     = iface_labels,
+            fg_color   = "#1e1e3a",
+            button_color = ACCENT,
+            button_hover_color = "#5550CC",
+            font       = ctk.CTkFont("Segoe UI", 11),
+            width      = 220,
+            height     = 34,
+            command    = self._on_iface_change,
+        )
+        self._iface_menu.pack(side="right", padx=(0, 6), pady=10)
+
+        ctk.CTkLabel(top, text="Interface:",
+                     font=ctk.CTkFont("Segoe UI", 11),
+                     text_color="#888").pack(side="right", padx=(8, 2))
+
+        # set initial interface
+        if ifaces:
+            self._iface = ifaces[0]["name"]
+
         self._gw_label = ctk.CTkLabel(
             top, text="Gateway: detecting...",
             font=ctk.CTkFont("Segoe UI", 11),
             text_color="#666",
         )
-        self._gw_label.pack(side="right", padx=4)
+        self._gw_label.pack(side="left", padx=12)
 
         # ── device table ──
         tbl = tk.Frame(self, bg=BG)
@@ -135,6 +165,40 @@ class App(ctk.CTk):
                        width=100, height=36,
                        command=self._resume_all).pack(side="left", padx=6, pady=9)
 
+        # ── Lag mode + intensity slider ──
+        sep0 = ctk.CTkFrame(bot, fg_color="#333355", width=1, height=34)
+        sep0.pack(side="left", padx=10, pady=10)
+
+        ctk.CTkLabel(bot, text="⚡ Lag:",
+                     font=ctk.CTkFont("Segoe UI", 11, "bold"),
+                     text_color="#f0a030").pack(side="left", padx=(0, 4))
+
+        self._intensity_var = tk.IntVar(value=50)
+        self._intensity_label = ctk.CTkLabel(
+            bot, text="50%",
+            font=ctk.CTkFont("Segoe UI", 11),
+            text_color="#f0a030", width=36,
+        )
+        self._intensity_label.pack(side="left", padx=(0, 4))
+
+        ctk.CTkSlider(
+            bot,
+            from_=1, to=100,
+            variable=self._intensity_var,
+            width=120, height=18,
+            button_color="#f0a030",
+            button_hover_color="#c07010",
+            progress_color="#f0a030",
+            command=lambda v: self._intensity_label.configure(text=f"{int(v)}%"),
+        ).pack(side="left", padx=(0, 6), pady=12)
+
+        ctk.CTkButton(bot, text="⚡  LAG",
+                       fg_color="#7a5200", hover_color="#5a3c00",
+                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                       text_color="white",
+                       width=100, height=36,
+                       command=self._lag).pack(side="left", padx=(0, 6), pady=9)
+
         # ── timed cut ──
         sep = ctk.CTkFrame(bot, fg_color="#333355", width=1, height=34)
         sep.pack(side="left", padx=10, pady=10)
@@ -159,10 +223,43 @@ class App(ctk.CTk):
                        width=130, height=36,
                        command=self._timed_cut).pack(side="left", padx=(0, 6), pady=9)
 
-        self._status = ctk.CTkLabel(bot, text="Ready — click Scan",
+        # ── Delayed cut ──
+        sep2 = ctk.CTkFrame(bot, fg_color="#333355", width=1, height=34)
+        sep2.pack(side="left", padx=10, pady=10)
+
+        self._delay_var = tk.StringVar(value="3")
+        ctk.CTkEntry(
+            bot, textvariable=self._delay_var,
+            width=46, height=34,
+            font=ctk.CTkFont("Segoe UI", 12),
+            justify="center",
+        ).pack(side="left", padx=(0, 4), pady=9)
+
+        ctk.CTkLabel(bot, text="sec delay",
+                     font=ctk.CTkFont("Segoe UI", 11),
+                     text_color="#666").pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(bot, text="⏳  Delayed Cut",
+                       fg_color="#1a4a6a", hover_color="#163d58",
+                       font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                       text_color="white",
+                       width=140, height=36,
+                       command=self._delayed_cut).pack(side="left", padx=(0, 6), pady=9)
+
+        self._status = ctk.CTkLabel(bot, text="Ready — select interface then Scan",
                                      font=ctk.CTkFont("Segoe UI", 11),
                                      text_color="#666")
         self._status.pack(side="right", padx=16)
+
+    # ── interface change ──────────────────────────────────────────────────────
+
+    def _on_iface_change(self, label: str):
+        self._iface       = self._iface_map.get(label)
+        self._gateway_ip  = None
+        self._gateway_mac = None
+        self._gw_label.configure(text="Gateway: detecting...")
+        self._init_network()
+        self._set_status(f"Interface changed — click Scan to refresh")
 
     # ── network init ──────────────────────────────────────────────────────────
 
@@ -195,9 +292,9 @@ class App(ctk.CTk):
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
-        own  = get_local_ip()
+        own  = get_local_ip(self._iface)
         devs = scan_network(
-            get_subnet(),
+            get_subnet(self._iface),
             on_progress=lambda m: self.after(0, lambda msg=m: self._set_status(msg)),
         )
 
@@ -268,6 +365,22 @@ class App(ctk.CTk):
         self._refresh_table()
         self._set_status(f"Cutting {dev['ip']}…")
 
+    def _lag(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("dz_solutions", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("dz_solutions",
+                "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
+            return
+        intensity = self._intensity_var.get()
+        self._spoofer.apply(dev["ip"], dev["mac"],
+                             self._gateway_ip, self._gateway_mac,
+                             mode="lag", intensity=intensity)
+        self._refresh_table()
+        self._set_status(f"⚡ Lagging {dev['ip']} at {intensity}% intensity")
+
     def _timed_cut(self):
         dev = self._selected_dev()
         if not dev:
@@ -294,6 +407,44 @@ class App(ctk.CTk):
         self._refresh_table()
         self._countdown(dev, secs)
 
+    def _delayed_cut(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("dz_solutions", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("dz_solutions",
+                "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
+            return
+        try:
+            secs = int(self._delay_var.get())
+            if secs < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("dz_solutions", "Enter a valid delay in seconds (≥ 1).")
+            return
+
+        # Cancel any existing delay timer for this device
+        existing = self._delay_timers.pop(dev["ip"], None)
+        if existing:
+            self.after_cancel(existing)
+
+        self._pre_cut_countdown(dev, secs)
+
+    def _pre_cut_countdown(self, dev: dict, remaining: int):
+        """Count down BEFORE cutting — shows warning, then cuts."""
+        if remaining <= 0:
+            self._delay_timers.pop(dev["ip"], None)
+            self._spoofer.apply(dev["ip"], dev["mac"],
+                                 self._gateway_ip, self._gateway_mac,
+                                 mode="block")
+            self._refresh_table()
+            self._set_status(f"✂ Now cutting {dev['ip']}")
+            return
+        self._set_status(f"⏳ Cutting {dev['ip']} in {remaining}s… (select + Resume to cancel)")
+        after_id = self.after(1000, lambda: self._pre_cut_countdown(dev, remaining - 1))
+        self._delay_timers[dev["ip"]] = after_id
+
     def _countdown(self, dev: dict, remaining: int):
         self._set_status(f"Cutting {dev['ip']} — resuming in {remaining}s")
         if remaining <= 0:
@@ -319,6 +470,10 @@ class App(ctk.CTk):
             messagebox.showinfo("dz_solutions", "Select a device first.")
             return
         self._cancel_timer(dev["ip"])
+        # also cancel any pending delayed cut
+        delay_id = self._delay_timers.pop(dev["ip"], None)
+        if delay_id:
+            self.after_cancel(delay_id)
         self._spoofer.remove(dev["ip"], dev["mac"],
                               self._gateway_ip or "",
                               self._gateway_mac or "")
