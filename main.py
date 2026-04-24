@@ -59,7 +59,7 @@ class App(ctk.CTk):
 
         # ── Interface picker ──
         ifaces = get_interfaces()
-        self._iface_map = {f"{i['kind']} — {i['ip']}": i["name"] for i in ifaces}
+        self._iface_map = {f"{i['kind']} — {i['ip']}": i["name"] for i in ifaces} if ifaces else {}
         iface_labels    = list(self._iface_map.keys()) or ["No interfaces found"]
 
         self._iface_var = tk.StringVar(value=iface_labels[0])

@@ -8,23 +8,39 @@ from scapy.all import ARP, Ether, srp, conf, get_if_list, get_if_addr
 
 
 def get_interfaces() -> list[dict]:
-    """Return all active network interfaces with name, IP, and type guess."""
+    """Return active interfaces with human-readable type from ipconfig."""
+    # Parse ipconfig to get friendly name → IP mapping
+    ip_to_kind: dict[str, str] = {}
+    try:
+        out = subprocess.run(["ipconfig"], capture_output=True, text=True).stdout
+        current_kind = "Other"
+        for line in out.splitlines():
+            low = line.lower()
+            if "wireless" in low or "wi-fi" in low or "wlan" in low:
+                current_kind = "📶 WiFi"
+            elif "ethernet" in low or "local area" in low:
+                current_kind = "🔌 Ethernet"
+            elif "adapter" in low:
+                current_kind = "Other"
+            m = re.search(r"IPv4 Address[\. ]+:\s*([\d.]+)", line)
+            if m:
+                ip_to_kind[m.group(1).strip()] = current_kind
+    except Exception:
+        pass
+
     ifaces = []
     for name in get_if_list():
         try:
             ip = get_if_addr(name)
             if not ip or ip == "0.0.0.0" or ip.startswith("127."):
                 continue
-            lower = name.lower()
-            if any(k in lower for k in ("wi-fi", "wifi", "wireless", "wlan", "802.11")):
-                kind = "WiFi"
-            elif any(k in lower for k in ("eth", "ethernet", "local area")):
-                kind = "Ethernet"
-            else:
-                kind = "Other"
+            kind = ip_to_kind.get(ip, "Other")
             ifaces.append({"name": name, "ip": ip, "kind": kind})
         except Exception:
             continue
+
+    # Sort: WiFi and Ethernet first
+    ifaces.sort(key=lambda x: (0 if "WiFi" in x["kind"] or "Ethernet" in x["kind"] else 1))
     return ifaces
 
 
