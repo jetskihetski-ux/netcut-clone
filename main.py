@@ -428,10 +428,81 @@ class App(ctk.CTk):
         self._spoofer.apply(dev["ip"], dev["mac"],
                              self._gateway_ip, self._gateway_mac,
                              mode="lag", intensity=intensity)
+        self._refresh_table()
+        self._set_status(f"⚡ Lagging {dev['ip']} at {intensity}% intensity")
 
+    def _timed_cut(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("dz_solutions", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("dz_solutions",
+                "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
+            return
+        try:
+            secs = int(self._timer_var.get())
+            if secs < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("dz_solutions", "Enter a valid number of seconds (≥ 1).")
+            return
+        self._cancel_timer(dev["ip"])
+        gw_ip  = self._gateway_ip
+        gw_mac = self._gateway_mac
+        self._spoofer.apply(dev["ip"], dev["mac"], gw_ip, gw_mac, mode="block")
+        self._refresh_table()
+        self._countdown(dev, secs, gw_ip, gw_mac)
+
+    def _countdown(self, dev: dict, remaining: int, gw_ip: str, gw_mac: str):
+        self._set_status(f"Cutting {dev['ip']} — resuming in {remaining}s")
+        if remaining <= 0:
+            self._timers.pop(dev["ip"], None)
+            self._spoofer.remove(dev["ip"], dev["mac"], gw_ip, gw_mac)
+            self._refresh_table()
+            self._set_status(f"Timer done — {dev['ip']} resumed")
+            return
+        after_id = self.after(1000, lambda: self._countdown(dev, remaining - 1, gw_ip, gw_mac))
+        self._timers[dev["ip"]] = after_id
+
+    def _cancel_timer(self, ip: str):
         after_id = self._timers.pop(ip, None)
         if after_id:
             self.after_cancel(after_id)
+
+    def _delayed_cut(self):
+        dev = self._selected_dev()
+        if not dev:
+            messagebox.showinfo("dz_solutions", "Select a device first.")
+            return
+        if not self._gateway_ip or not self._gateway_mac:
+            messagebox.showerror("dz_solutions",
+                "Gateway MAC not resolved.\n\nRun as Administrator, then scan again.")
+            return
+        try:
+            secs = int(self._delay_var.get())
+            if secs < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("dz_solutions", "Enter a valid delay in seconds (≥ 1).")
+            return
+        existing = self._delay_timers.pop(dev["ip"], None)
+        if existing:
+            self.after_cancel(existing)
+        self._pre_cut_countdown(dev, secs)
+
+    def _pre_cut_countdown(self, dev: dict, remaining: int):
+        if remaining <= 0:
+            self._delay_timers.pop(dev["ip"], None)
+            self._spoofer.apply(dev["ip"], dev["mac"],
+                                 self._gateway_ip, self._gateway_mac,
+                                 mode="block")
+            self._refresh_table()
+            self._set_status(f"✂ Now cutting {dev['ip']}")
+            return
+        self._set_status(f"⏳ Cutting {dev['ip']} in {remaining}s… (select + Resume to cancel)")
+        after_id = self.after(1000, lambda: self._pre_cut_countdown(dev, remaining - 1))
+        self._delay_timers[dev["ip"]] = after_id
 
     def _resume(self):
         dev = self._selected_dev()
