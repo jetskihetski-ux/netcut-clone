@@ -44,7 +44,11 @@ class ARPSpoofer:
                gateway_ip: str, gateway_mac: str) -> None:
         """Stop effect and restore ARP tables."""
         self._stop(target_ip)
-        self._restore(target_ip, target_mac, gateway_ip, gateway_mac)
+        threading.Thread(
+            target=self._restore,
+            args=(target_ip, target_mac, gateway_ip, gateway_mac),
+            daemon=True,
+        ).start()
 
     def remove_all(self, devices: list[dict],
                    gateway_ip: str, gateway_mac: str) -> None:
@@ -128,12 +132,22 @@ class ARPSpoofer:
                  gateway_ip: str, gateway_mac: str) -> None:
         if not (target_mac and gateway_mac):
             return
-        self._send(target_mac,
-                   ARP(op=2, pdst=target_ip,  hwdst=target_mac,
-                       psrc=gateway_ip, hwsrc=gateway_mac), count=10)
-        self._send(gateway_mac,
-                   ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac,
-                       psrc=target_ip, hwsrc=target_mac),  count=10)
+        # Ethernet src must match ARP hwsrc — devices reject packets where they differ
+        try:
+            sendp(
+                Ether(src=gateway_mac, dst=target_mac) /
+                ARP(op=2, pdst=target_ip, hwdst=target_mac,
+                    psrc=gateway_ip, hwsrc=gateway_mac),
+                iface=self._iface, verbose=0, count=10, inter=0.05,
+            )
+            sendp(
+                Ether(src=target_mac, dst=gateway_mac) /
+                ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac,
+                    psrc=target_ip, hwsrc=target_mac),
+                iface=self._iface, verbose=0, count=10, inter=0.05,
+            )
+        except Exception as e:
+            print(f"[spoofer] RESTORE FAILED: {e}")
 
     def _send(self, dst_mac: str, arp_pkt,
               count: int = 1) -> bool:
