@@ -98,7 +98,8 @@ class ARPSpoofer:
                     if not self._state.get(target_ip, {}).get("running"):
                         break
 
-                self._restore(target_ip, target_mac, gateway_ip, gateway_mac)
+                self._restore(target_ip, target_mac, gateway_ip, gateway_mac,
+                              count=2, inter=0)
                 time.sleep(allow_t)
 
             elif mode == "limit":
@@ -128,7 +129,8 @@ class ARPSpoofer:
                     self._state[target_ip]["running"] = False
 
     def _restore(self, target_ip: str, target_mac: str,
-                 gateway_ip: str, gateway_mac: str) -> None:
+                 gateway_ip: str, gateway_mac: str,
+                 count: int = 10, inter: float = 0.05) -> None:
         if not (target_mac and gateway_mac):
             return
         # Ethernet src must match ARP hwsrc or modern devices reject the packet.
@@ -137,13 +139,13 @@ class ARPSpoofer:
                 Ether(src=gateway_mac, dst=target_mac) /
                 ARP(op=2, pdst=target_ip, hwdst=target_mac,
                     psrc=gateway_ip, hwsrc=gateway_mac),
-                iface=self._iface, verbose=0, count=10, inter=0.05,
+                iface=self._iface, verbose=0, count=count, inter=inter,
             )
             sendp(
                 Ether(src=target_mac, dst=gateway_mac) /
                 ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac,
                     psrc=target_ip, hwsrc=target_mac),
-                iface=self._iface, verbose=0, count=10, inter=0.05,
+                iface=self._iface, verbose=0, count=count, inter=inter,
             )
         except Exception as e:
             print(f"[spoofer] RESTORE FAILED: {e}")
